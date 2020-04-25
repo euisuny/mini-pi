@@ -3,7 +3,7 @@ open Ast
 effect Send : (channel * var * pexp) -> unit
 let send c v p = perform (Send (c, v, p))
 
-effect Recv : (channel * var * pexp) -> unit
+effect Recv : (channel * var * pexp) -> pexp
 let recv f = perform (Recv f)
 
 effect Par : (pexp -> pexp -> unit) -> unit
@@ -29,31 +29,26 @@ let eval prog =
      blocked processes *)
   let recv_q = Queue.create () in
   let enqueue_recv e = Queue.push e recv_q in
-  let dequeue_recv () =
-    if Queue.is_empty recv_q then None
-    else Queue.pop recv_q
-  in
+  let find_receiver c = List.find_opt (fun r -> r.channel = c) recv_q in
 
   let send_q = Queue.create () in
   let enqueue_send e = Queue.push e send_q in
-  let dequeue_send () =
-    if Queue.is_empty send_q then None
-    else Queue.pop send_q
-  in
+  let find_sender c = List.find_opt (fun s -> s.channel = c) send_q in
 
   let rec spawn f =
     match f () with
     | () -> failwith "() unimplemented"
     | effect (Send (channel, v, process)) k ->
-      let receiver = dequeue_recv () in
-      begin match receiver with
+      (* Find some receiver that is waiting to receive on the channel you are trying to send on *)
+      begin match find_receiver channel with
         | Some receiver ->
           (* want to unblock the receiver and send it the process *)
           (* add both the receiver and sender back to the run_q *)
-          (* should the interpreter handle the actual substituting? I think this makes sense *)
+          (* should the interpreter handle the actual substituting? I think so. in which case
+             just call continue to return the process to the receiver *)
           failwith "Send receiver case unimplemented"
         | None -> (* block this process since there is no receiver yet *)
-          (* enqueue_send something *) (* what to keep track of in the send_q? *)
+          (* enqueue_send {k, channel} *) (* what to keep track of in the send_q? *)
           failwith "Send no receiver case unimplemented"
       end ;
       dequeue()
