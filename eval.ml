@@ -65,7 +65,7 @@ let eval prog =
           let pr = ref (SSend (c, v, f)) in
           enqueue (fun () -> continue k pr)
           begin match find_receiver c with
-            | Some sender -> 
+            | Some sender -> failwith "Send receiver case unimplemented"
             | None -> dequeue ()
           end
       | effect (Recv (c, v, f)) k ->
