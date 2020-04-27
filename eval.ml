@@ -84,9 +84,9 @@ let rec step (e : exp) : exp =
   | v -> v
 
 let rec eval prog =
-  let rec fork : 'a. 'a promise -> (unit -> 'a) -> exp =
+  let rec fork : 'a. 'a promise -> (unit -> 'a) -> unit =
     fun pr main ->
-      match main () with
+      match step (main ()) with
       | v ->
           let l = match !pr with
             | Waiting l -> l
