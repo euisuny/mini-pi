@@ -24,13 +24,15 @@ let rec to_string (e : pexp) : string =
   | Pbang p -> sprintf "! %s" (to_string p)
   | Pzero -> sprintf "0"
 
+(* TODO: Not terribly relevant before we have the "new" operator. *)
 (* Get free variables of an expression. *)
+(* IY : How should we treat channel names? *)
 let fv (e : pexp) : var HashSet.t =
   let h = HashSet.make() in
   let rec fv (bv : var list) (e : pexp) : unit =
     match e with
-    | Psend (c, v, p) -> fv (v @ bv) e
-    | Precv (c, v, p) -> fv bv e
+    | Psend (c, v, p) -> fv bv e
+    | Precv (c, v, p) -> fv (v @ bv) e
     | Ppar (p, p') -> fv bv p; fv bv p'
     | Pbang p -> fv bv p
     | Pzero -> () in
@@ -40,4 +42,4 @@ let fv (e : pexp) : var HashSet.t =
 let allv (e : pexp) : channel HashSet.t = failwith "unimplemented"
 
 (* Substitute v for x in e, avoiding capture. *)
-let subst (v : pexp) (x : channel) (e : pexp) : pexp = failwith "unimplemented"
+let subst (v : pexp) (x : var) (e : var) : pexp = failwith "unimplemented"
