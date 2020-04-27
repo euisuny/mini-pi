@@ -1,5 +1,7 @@
 open Ast
 
+(* IY: We probably want either promise or status (need to form a good way to combine
+ * the two). *)
 type 'a _promise =
     Waiting of ('a,unit) continuation list
   | Done of 'a
@@ -16,6 +18,12 @@ type status =
 effect Par : ((unit -> pexp) * (unit -> pexp)) -> unit
 let par f = perform (Par f)
 
+effect Bang : (unit -> pexp) -> unit
+let bang f = perform (Bang f)
+
+effect Zero : unit
+let zero () = perform Zero
+
 (* Async primitives *)
 effect Async : (unit -> 'a) -> 'a promise
 let async f = perform (Async f)
@@ -26,12 +34,6 @@ let yield () = perform Yield
 effect Await : 'a promise -> 'a
 let await p = perform (Await p)
 
-effect Bang : var -> unit
-let bang v = perform (Bang v)
-
-effect Zero : unit
-let zero () = perform Zero
-
 (* Message exchange *)
 effect Send : (channel * var * (var, status) continuation) -> unit
 let send c v p = perform (Send (c, v, p))
@@ -39,22 +41,7 @@ let send c v p = perform (Send (c, v, p))
 effect Recv : (channel * var * (var, status) continuation) -> pexp
 let recv c v p = perform (Recv (c, v, p))
 
-effect Xchg : int -> int
-let xchg n = perform (Xchg n)
-
-(* step through [f v] until either termination or pauses on Xchg *)
-let step f v () =
-  match f v with
-  | _ -> Done
-  | effect (Xchg m) k -> Paused (m, k)
-
-let rec message_passing a b =
-match a (), b () with
-| Done, Done -> ()
-| Paused (v1, k1), Paused (v2, k2) ->
-    run_both (fun () -> continue k1 v2) (fun () -> continue k2 v1)
-| _ -> failwith "improper synchronization"
-
+(* TODO: eval should return a normalized pi-calc term. *)
 let eval prog =
   let run_q = Queue.create () in
   let enqueue k = Queue.push k run_q in
@@ -75,21 +62,49 @@ let eval prog =
       match main () with
       | () -> failwith "() unimplemented"
       | effect (Send (c, v, f)) k ->
-        let pr = ref (Paused (c, v, f))
-        enqueue (fun () -> continue k pr)
-        begin match find_receiver channel with
-          | Some sender -> failwith "Send receiver case unimplemented"
-          | None -> dequeue ()
-        end
-      | effect (Recv (channel, v, process)) k ->
-        let pr = ref (Paused (c, v, f))
-        enqueue (fun () -> continue k pr)
-        begin match find_receiver channel with
-          | Some sender -> failwith "Recv reciever case unimplemented"
-          | None -> dequeue ()
-        end
-      | effect (Par (p, p')) k -> async p; async p'; failwith "Par cont unimplemented"
-      | effect (Bang v) k -> failwith "Bang unimplemented"
+          let pr = ref (Paused (c, v, f)) in
+          enqueue (fun () -> continue k pr)
+          begin match find_receiver c with
+            | Some sender -> failwith "Send receiver case unimplemented"
+            | None -> dequeue ()
+          end
+      | effect (Recv (c, v, f)) k ->
+          let pr = ref (Paused (c, v, f)) in
+          enqueue (fun () -> continue k pr)
+          begin match find_receiver c with
+            | Some sender -> failwith "Recv reciever case unimplemented"
+            | None -> dequeue ()
+          end
+      | effect (Par (p, p')) k ->
+          async p
+          async p'
+          dequeue ()
+      | effect (Bang v) k ->
+          async p
+          (* TODO: encode bang and insert into queue. *)
       | effect Zero k -> PZero
+      (* Standard async handling *)
+      | effect (Async f) k ->
+          let pr = ref (Waiting []) in
+          enqueue (fun () -> continue k pr);
+          spawn pr f
+      | effect Yield k ->
+          enqueue (continue k);
+          dequeue ()
+      | effect (Await p) k ->
+          begin match !p with
+          | Done v -> continue k v
+          | Waiting l -> begin
+              p := Waiting (k::l);
+              dequeue ()
+            end
+          end
   in
   spawn prog
+(* IY: Maybe we want to define mutually recursive handlers? (this one doesn't have
+ * to be mutually recursive.) *)
+and message_passing a b k =
+  match a (), b () with
+  | Paused (v1, k1), Paused (v2, k2) ->
+      message_passing (fun () -> continue k1 v2) (fun () -> continue k2 v1)
+  | p1, p2 -> par (fun () -> p1) (fun () -> p2)
