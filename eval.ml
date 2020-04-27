@@ -33,7 +33,7 @@ let subst (v : exp) (x : var) (nx : var) : exp = failwith "unimplemented"
 
 (* Async primitives. *)
 type 'a _promise =
-    Waiting of ('a, exp) continuation list
+    Waiting of ('a, unit) continuation list
   | Done of 'a
 
 type 'a promise = 'a _promise ref
@@ -41,24 +41,24 @@ type 'a promise = 'a _promise ref
 effect Async : (unit -> 'a) -> 'a promise
 let async f = perform (Async f)
 
-effect Yield : unit
-let yield () = perform Yield
-
 effect Await : 'a promise -> 'a
 let await p = perform (Await p)
 
 (* Message passing primitives. *)
-effect Send : (channel * 'a) -> unit
+effect Send : (channel * var) -> unit
 let send c v = perform (Send (c,v))
 
-effect Recv : channel -> 'a
+effect Recv : channel -> var
 let recv x = perform (Recv x)
+
+let send_table : (channel, var) t = Hashtbl.create 30
+let recv_table : (channel, unit) t = Hashtbl.create 30
 
 (* Scheduler: queue of processes. *)
 let q = Queue.create ()
-let enqueue (t : unit -> exp) = Queue.push t q
-let dequeue () : exp =
-  if Queue.is_empty q then failwith "Queue is empty"
+let enqueue t = Queue.push t q
+let dequeue () =
+  if Queue.is_empty q then ()
   else Queue.pop q ()
 
 let rec step (e : exp) : exp =
@@ -79,29 +79,25 @@ let rec step (e : exp) : exp =
       step (await pc)
   | Bang p ->
       let pr = async (fun () -> p) in
-      enqueue (fun () -> Bang p);
-      Par (await pr, Bang p)
+      let pw = async (fun () -> Bang p) in
+      Par (await pr, await pw)
   | v -> v
 
-let rec eval prog =
+let run main =
   let rec fork : 'a. 'a promise -> (unit -> 'a) -> unit =
     fun pr main ->
-      match step (main ()) with
+      match main () with
       | v ->
           let l = match !pr with
             | Waiting l -> l
             | _ -> failwith "impossible"
           in
           List.iter (fun k -> enqueue (fun () -> continue k v)) l;
-          pr := Done v;
-          dequeue ()
+          pr := Done v; dequeue ()
       | effect (Async f) k ->
           let pr = ref (Waiting []) in
           enqueue (fun () -> continue k pr);
           fork pr f
-      | effect Yield k ->
-          enqueue (continue k);
-          dequeue ()
       | effect (Await p) k ->
           begin match !p with
           | Done v -> continue k v
@@ -110,57 +106,15 @@ let rec eval prog =
               dequeue ()
             end
           end
-      | effect (Send _) k -> failwith "Unimplemented send" (* TODO *)
-      | effect (Recv _) k -> failwith "Unimplemented recv" (* TODO *)
+      | effect (Send (c, v)) k ->
+          begin match Hashtbl.find_opt recv_table c with
+          | None -> Hashtbl.add send_table c v; dequeue ()
+          | Some r -> continue k ()
+          end
+      | effect (Recv c) k ->
+          begin match Hashtbl.find_opt send_table c with
+          | None -> Hashtbl.add recv_table c (); dequeue ()
+          | Some r -> continue k r
+          end
   in
-  fork (ref (Waiting [])) eval
-
-(* let tb = Hashtbl.create 20
- * let enqueue (c : channel) (v : action option * 'a) = Hashtbl.add tb c v
- * let match_action (c : channel) (v : action option * 'a) = begin
- *   match (Hashtbl.find_opt tb c, v) with
- *   | Some (Some (ASend n), pl), (Some (ARecv n'), pr) -> begin
- *     match n = n' with
- *     | true -> Hashtbl.remove tb c; Some (pl, pr)
- *     | false -> None end
- *   | _, _ -> None end *)
-
-(* TODO: eval should return a normalized pi-calc term. *)
-(* let eval prog =
- *   let rec spawn : status -> (unit -> (action option * (var, unit) continuation)) -> unit =
- *     fun pr main ->
- *       match main () with
- *       | v -> failwith "unimplemented"
- *       | effect (Await p) k ->
- *           begin match !p with
- *           | Done v -> continue k v
- *           | Waiting (c, Some (ASend v), Some f) -> begin
- *               match match_action c (Some (ASend v), f) with
- *               | Some (kl, kr) -> (continue kl v); (continue kr v)
- *               | _ -> p := Waiting (c, Some (ASend v), Some f)
- *             end
- *           | Waiting (c, Some (ARecv v), Some f) -> begin
- *               match match_action c (Some (ARecv v), f) with
- *               | Some (kl, kr) -> (continue k v); (continue k v)
- *               | _ -> p := Waiting (c, Some (ARecv v), Some f)
- *             end
- *           end
- *       | effect (Bang v) k ->
- *           failwith "Bang case unimplemented"
- *           (\* async p *\)
- *           (\* TODO: encode bang and insert into queue. *\)
- *       | effect Zero k ->
- *           failwith "Zero case unimplemented"
- *           (\* PZero *\)
- *       (\* Standard async handling *\)
- *       | effect (Async f) k ->
- *           let pr = ref (Waiting ("", None, None)) in
- *           (\* enqueue "" (continue k) *\)
- *           spawn pr f
- *       (\* | effect Yield k ->
- *        *     enqueue (continue k);
- *        *    dequeue () *\)
- *   in
- *   spawn (ref (Waiting ("", None, None))) prog
- * (\* IY: Maybe we want to define mutually recursive handlers? (this one doesn't have
- *  * to be mutually recursive.) *\) *)
+  fork (ref (Waiting [])) main
