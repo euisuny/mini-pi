@@ -29,7 +29,25 @@ let rec translate (p : pexp) : exp =
   | PZero -> Zero
 
 (* TODO: Implement capture-avoiding substitution. *)
-let subst (v : exp) (x : var) (nx : var) : exp = failwith "unimplemented"
+let rec subst (v : exp) (x : var) (nx : var) : exp =
+  match v with
+  | Act (chan, act, e1) ->
+    let new_chan = if chan = x then nx else chan in
+    let new_act =
+      begin match act with
+        | ASend c -> if c = x then ASend nx else act
+        | ARecv c -> if c = x then ARecv nx else act
+      end in
+    let new_e1 : exp = subst e1 x nx in
+    Act (new_chan, new_act, new_e1)
+  | Par (e1, e2) ->
+    let new_e1 : exp = subst e1 x nx in
+    let new_e2 : exp = subst e2 x nx in
+    Par (new_e1, new_e2)
+  | Bang e1 ->
+    let new_e1 : exp = subst e1 x nx in
+    Bang (new_e1)
+  | Zero -> Zero
 
 (* Async primitives. *)
 type 'a _promise =
