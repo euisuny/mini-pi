@@ -10,9 +10,9 @@ type 'a promise = 'a _promise ref
 
 (* status of a computation *)
 type status =
-  Done of pexp
-| Send of channel * var * (var, status) continuation
-| Recv of channel * var * (var, status) continuation
+  SDone of pexp
+| SSend of channel * var * (var, status) continuation
+| SRecv of channel * var * (var, status) continuation
 
 (* Pi-calc primitives *)
 effect Par : ((unit -> pexp) * (unit -> pexp)) -> unit
@@ -62,25 +62,26 @@ let eval prog =
       match main () with
       | () -> failwith "() unimplemented"
       | effect (Send (c, v, f)) k ->
-          let pr = ref (Paused (c, v, f)) in
+          let pr = ref (SSend (c, v, f)) in
           enqueue (fun () -> continue k pr)
           begin match find_receiver c with
-            | Some sender -> failwith "Send receiver case unimplemented"
+            | Some sender -> 
             | None -> dequeue ()
           end
       | effect (Recv (c, v, f)) k ->
-          let pr = ref (Paused (c, v, f)) in
+          let pr = ref (Recv (c, v, f)) in
           enqueue (fun () -> continue k pr)
           begin match find_receiver c with
             | Some sender -> failwith "Recv reciever case unimplemented"
-            | None -> dequeue ()
+            | None -> dequeue  ()
           end
       | effect (Par (p, p')) k ->
           async p
           async p'
           dequeue ()
       | effect (Bang v) k ->
-          async p
+          failwith "Bang case unimplemented"
+          (* async p *)
           (* TODO: encode bang and insert into queue. *)
       | effect Zero k -> PZero
       (* Standard async handling *)

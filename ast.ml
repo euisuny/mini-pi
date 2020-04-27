@@ -11,7 +11,7 @@ type pexp =
   | Psend of channel * var * pexp
   | Precv of channel * var * pexp
   | Ppar of pexp * pexp
-  | Pbang of var
+  | Pbang of pexp
   | Pzero
 
 (* Pretty printing expressions. *)
@@ -20,5 +20,5 @@ let rec to_string (e : pexp) : string =
   | Psend (c, v, p) -> sprintf "%s (%s).%s" c v (to_string p)
   | Precv (c, v, p) -> sprintf "%s <%s>.%s" c v (to_string p)
   | Ppar (p, p') -> sprintf "%s | %s" (to_string p) (to_string p')
-  | Pbang v -> sprintf "! %s" v
+  | Pbang p -> sprintf "! %s" (to_string p)
   | Pzero -> sprintf "0"
