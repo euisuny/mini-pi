@@ -1,9 +1,11 @@
-open Ast
 open Util
 open Printf
 open Hashtbl
 
 let debug = Printf.printf
+
+type channel = string
+type var = string
 
 type action =
 | ASend of var
@@ -24,22 +26,6 @@ let rec to_string (e : exp) : string =
   | Par (p, p') -> sprintf "%s | %s" (to_string p) (to_string p')
   | Bang p -> sprintf "! %s" (to_string p)
   | Zero -> sprintf "0"
-
-let rec translate (p : pexp) : exp =
-  match p with
-  | PSend (c, v, p) -> begin
-      match v with
-      | [] -> translate p
-      | hd :: tl -> Act (c, ASend hd, translate (PSend (c, tl, p)))
-      end
-  | PRecv (c, v, p) -> begin
-      match v with
-      | [] -> translate p
-      | hd :: tl -> Act (c, ARecv hd, translate (PSend (c, tl, p)))
-      end
-  | PPar (p, p') -> Par (translate p, translate p')
-  | PBang p -> Bang (translate p)
-  | PZero -> Zero
 
 let rec subst (v : exp) (x : var) (nx : var) : exp =
   match v with
@@ -159,6 +145,6 @@ let run main =
   Hashtbl.iter (fun k () -> debug "recv_table [Key: %s, Value: ()]\n" k) recv_table
 
 let prog = Par (Act ("hi", ASend "msg", Zero), Act ("hi", ARecv "msg", Zero))
-let foo () = let p = step prog in p; debug "P-result: %s\n" (to_string p); p
+let foo () = let p = step prog in debug "P-result: %s\n" (to_string p); p
 
 let f = run foo
