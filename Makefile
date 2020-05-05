@@ -1,15 +1,15 @@
-SOURCES = util.ml ast.ml eval.ml
-EXE = util.native ast.native eval.native
+# SOURCES = util.ml ast.ml vanilla.ml
+EXE = util.native ast.native eval.native vanilla.native
 
 .PHONY: all
 
-all: fl
+all: $(EXE)
 
 clean:
-	rm -f *.out *.cmo *.cmx *.cmi
+	rm -rf _build/
 
-fl: $(SOURCES)
-	ocamlc -o fl -g str.cma $(SOURCES)
+# fl: $(SOURCES)
+# 	ocamlc -o fl -g str.cma $(SOURCES)
 
 %.native: %.ml
 	ocamlbuild -cflags -g -lflags -g -cflags -w -cflags -8 $@
