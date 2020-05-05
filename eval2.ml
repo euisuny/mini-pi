@@ -26,4 +26,4 @@ let rec to_string (e : exp) =
 let rec subst (e : exp) (x : id) (v : id) : exp = e
 
 (* TODO *)
-let rec eval (e : exp) : exp = e
+let rec eval (e : exp) : list exp = e
