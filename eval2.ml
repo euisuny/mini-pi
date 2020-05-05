@@ -20,3 +20,10 @@ let rec to_string (e : exp) =
   | Par (p, p') -> sprintf "%s | %s" (to_string p) (to_string p')
   | New (v, p) -> sprintf "new %s %s" v (to_string p)
   | Zero -> sprintf "0"
+
+
+(* TODO: Substitute v for x in e, avoiding capture. *)
+let rec subst (e : exp) (x : id) (v : id) : exp = e
+
+(* TODO *)
+let rec eval (e : exp) : exp = e
