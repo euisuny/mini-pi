@@ -1,5 +1,7 @@
+(*
 open Util
 open Printf
+   *)
 
 (* 
    General idea: 
@@ -30,6 +32,7 @@ type exp =
   | New of id * exp
   | Zero
 
+(* 
 let rec to_string (e : exp) =
   match e with
   | Send (c, v) -> sprintf "%s!%s" c v
@@ -38,8 +41,8 @@ let rec to_string (e : exp) =
   | Par (p, p') -> sprintf "%s | %s" (to_string p) (to_string p')
   | New (v, p) -> sprintf "new %s %s" v (to_string p)
   | Zero -> sprintf "0"
-
-  
+*)
+    
 (* This function will be used in the precomputation step to eliminate all "new" operators
    as well as during evaluation for the reduction step *)
 let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
@@ -65,5 +68,26 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
   | New (id, e) -> New (id, e) 
   | Zero -> Zero
 
+(* I'm gonna assume that ~ is an illegal character for picalc channels *)
+let make_unique (r: int ref) (id: id) : id =
+  let suffix = String.init !r (fun _ -> '~') in
+  id ^ suffix
+
+let rec eliminate_new (r: int ref) (e: exp) : exp =
+  match e with
+  | New (id, e) ->
+    let unique_id = make_unique r id in
+    let new_e = subst e id unique_id in
+    eliminate_new r new_e
+  | Recv (_, _, e) ->
+    eliminate_new r e
+  | BangR (_, _, e) ->
+    eliminate_new r e
+  | Par (e1, e2) ->
+    let new_e1 = eliminate_new r e1 in
+    let new_e2 = eliminate_new r e2 in
+    Par(new_e1, new_e2)
+  | _ -> e
+
 (* TODO *)
-let rec eval (e : exp) : list exp = e
+let rec eval (e : exp) : exp list = [e]
