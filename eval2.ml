@@ -39,26 +39,30 @@ let rec to_string (e : exp) =
   | New (v, p) -> sprintf "new %s %s" v (to_string p)
   | Zero -> sprintf "0"
 
-
-(* TODO: Substitute v for x in e, avoiding capture. *)
-let rec subst (e : exp) (x : id) (v : id) : exp = e
-  match v with
-  | Act (chan, act, e1) ->
-    let new_chan = if chan = x then nx else chan in
-    let new_act =
-      begin match act with
-        | ASend c -> if c = x then ASend nx else act
-        | ARecv c -> if c = x then ARecv nx else act
-      end in
-    let new_e1 : exp = subst e1 x nx in
-    Act (new_chan, new_act, new_e1)
+  
+(* This function will be used in the precomputation step to eliminate all "new" operators
+   as well as during evaluation for the reduction step *)
+let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
+  match e with
+  | Send (id1, id2) ->
+    let new_id1 = if id1 = replacee then replacer else id1 in
+    let new_id2 = if id2 = replacee then replacer else id2 in
+    Send(new_id1, new_id2)
+  | Recv (id1, id2, e) ->
+    let new_id1 = if id1 = replacee then replacer else id1 in
+    (* Only continue recurisng under the Receive if id2 is not the variable being replced *)
+    let new_e = if id2 = replacee then e else (subst e replacee replacer) in
+    Recv(new_id1, id2, new_e)
+  | BangR (id1, id2, e) -> 
+    let new_id1 = if id1 = replacee then replacer else id1 in
+    let new_e = if id2 = replacee then e else (subst e replacee replacer) in
+    BangR(new_id1, id2, new_e)
   | Par (e1, e2) ->
-    let new_e1 : exp = subst e1 x nx in
-    let new_e2 : exp = subst e2 x nx in
+    let new_e1 : exp = subst e1 replacee replacer in
+    let new_e2 : exp = subst e2 replacee replacer in
     Par (new_e1, new_e2)
-  | Bang e1 ->
-    let new_e1 : exp = subst e1 x nx in
-    Bang (new_e1)
+  (* This case only arises during precomputation, so it's fine to leave the exp as is *)
+  | New (id, e) -> New (id, e) 
   | Zero -> Zero
 
 (* TODO *)
