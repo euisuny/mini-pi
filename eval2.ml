@@ -38,51 +38,84 @@ let rec to_string (e : exp) =
   | Par (p, p') -> sprintf "%s | %s" (to_string p) (to_string p')
   | New (v, p) -> sprintf "new %s %s" v (to_string p)
   | Zero -> sprintf "0"
-  
-(* This function will be used in the precomputation step to eliminate all "new" operators
-   as well as during evaluation for the reduction step *)
+
+let fv (e : exp) : id HashSet.t =
+  let h = HashSet.make () in
+  let rec fv (bv : id list) (e : exp) : unit =
+    match e with
+    | Send (c, v) ->
+      if List.mem c bv then () else HashSet.add h c;
+      if List.mem v bv then () else HashSet.add h v;
+    | Recv (c, v, p) | BangR (c, v, p) ->
+      if List.mem c bv then () else HashSet.add h c;
+      fv (v :: bv) p
+    | Par (p, p') ->
+      fv bv p; fv bv p'
+    | New (v, p) ->
+      fv (v :: bv) p
+    | Zero -> () in
+  fv [] e; h
+
+(* Get all variables of an expression. *)
+let allv (e : exp) : id HashSet.t =
+  let h = HashSet.make () in
+  let rec allv (e : exp) : unit =
+    match e with
+    | Send (c, v) -> HashSet.add h c; HashSet.add h v
+    | Recv (c, v, p) | BangR (c, v, p) ->
+      HashSet.add h c; HashSet.add h v; allv p
+    | Par (p, p') -> allv p; allv p'
+    | New (v, p) -> HashSet.add h v; allv p
+    | Zero -> () in
+  allv e; h
+
+(* The substitution function will be used in the precomputation step to eliminate
+   all "new" operators as well as during evaluation for the reduction step *)
+
+(* Substitute replacee by replacer in expression e, avoiding capture. *)
+(* IY: TODO See Section 2.7 for behavior of capture avoiding substitution. *)
 let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
-  match e with
-  | Send (id1, id2) ->
-    let new_id1 = if id1 = replacee then replacer else id1 in
-    let new_id2 = if id2 = replacee then replacer else id2 in
-    Send(new_id1, new_id2)
-  | Recv (id1, id2, e) ->
-    let new_id1 = if id1 = replacee then replacer else id1 in
-    (* Only continue recurisng under the Receive if id2 is not the variable being replced *)
-    let new_e = if id2 = replacee then e else (subst e replacee replacer) in
-    Recv(new_id1, id2, new_e)
-  | BangR (id1, id2, e) -> 
-    let new_id1 = if id1 = replacee then replacer else id1 in
-    let new_e = if id2 = replacee then e else (subst e replacee replacer) in
-    BangR(new_id1, id2, new_e)
-  | Par (e1, e2) ->
-    let new_e1 : exp = subst e1 replacee replacer in
-    let new_e2 : exp = subst e2 replacee replacer in
-    Par (new_e1, new_e2)
-  (* This case only arises during precomputation, so it's fine to leave the exp as is *)
-  | New (id, e) -> New (id, e) 
-  | Zero -> Zero
+  (* IY: Invoking `Fresh.next fresh` should give you a fresh variable in this context. *)
+  let fresh = Fresh.make (allv e) in
+  let fvv = fv e in
+  let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
+    match e with
+    | Send (id1, id2) ->
+      let new_id1 = if id1 = replacee then replacer else id1 in
+      let new_id2 = if id2 = replacee then replacer else id2 in
+      Send(new_id1, new_id2)
+    | Recv (id1, id2, e) | BangR (id1, id2, e)->
+      (* IY: TODO We need capture-avoiding substitution here. *)
+      let new_id1 = if id1 = replacee then replacer else id1 in
+      (* Only continue recursing under the Receive if id2 is not the variable being replced *)
+      let new_e = if id2 = replacee then e else (subst e replacee replacer) in
+      Recv(new_id1, id2, new_e)
+    | Par (e1, e2) ->
+      let new_e1 : exp = subst e1 replacee replacer in
+      let new_e2 : exp = subst e2 replacee replacer in
+      Par (new_e1, new_e2)
+    (* This case only arises during precomputation, so it's fine to leave the exp as is *)
+    | New (id, e) -> New (id, e)
+    | Zero -> Zero in
+  subst e replacee replacer
 
-(* I'm gonna assume that ~ is an illegal character for picalc channels *)
-let make_unique (r: int ref) (id: id) : id =
-  let suffix = String.init !r (fun _ -> '~') in
-  id ^ suffix
-
-let rec eliminate_new (r: int ref) (e: exp) : exp =
-  match e with
-  | New (id, e) ->
-    let unique_id = make_unique r id in
-    let new_e = subst e id unique_id in
-    (* Remove the New operator from the tree *)
-    eliminate_new r new_e
-  | Recv (id1, id2, e) -> Recv (id1, id2, eliminate_new r e)
-  | BangR (id1, id2, e) -> BangR (id1, id2, eliminate_new r e)
-  | Par (e1, e2) ->
-    let new_e1 = eliminate_new r e1 in
-    let new_e2 = eliminate_new r e2 in
-    Par(new_e1, new_e2)
-  | _ -> e
+let rec eliminate_new (e: exp) : exp =
+  let fresh = Fresh.make (allv e) in
+  let rec eliminate_new (e : exp) : exp =
+    match e with
+    | New (id, e) ->
+      let new_id = Fresh.next fresh in
+      let new_e = subst e id new_id in
+      (* Remove the New operator from the tree *)
+      eliminate_new new_e
+    | Recv (id1, id2, e) -> Recv (id1, id2, eliminate_new e)
+    | BangR (id1, id2, e) -> BangR (id1, id2, eliminate_new e)
+    | Par (e1, e2) ->
+      let new_e1 = eliminate_new e1 in
+      let new_e2 = eliminate_new e2 in
+      Par(new_e1, new_e2)
+    | _ -> e in
+  eliminate_new e
 
 (* TODO *)
 let rec eval (e : exp) : exp list = [e]
