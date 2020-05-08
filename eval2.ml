@@ -87,9 +87,11 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
     | Recv (id1, id2, e) | BangR (id1, id2, e)->
       (* IY: TODO We need capture-avoiding substitution here. *)
       let new_id1 = if id1 = replacee then replacer else id1 in
-      (* Only continue recursing under the Receive if id2 is not the variable being replced *)
-      let new_e = if id2 = replacee then e else (subst e replacee replacer) in
-      Recv(new_id1, id2, new_e)
+      (* If id2 is the same as the variable being substituted out, generate a new name and
+         substitute all occurrences of id2 in the subexpression with this new name *)
+      let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
+      let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
+      Recv(new_id1, new_id2, new_e)
     | Par (e1, e2) ->
       let new_e1 : exp = subst e1 replacee replacer in
       let new_e2 : exp = subst e2 replacee replacer in
