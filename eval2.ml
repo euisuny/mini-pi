@@ -1,22 +1,20 @@
 open Util
 open Printf
 
-(* 
-   General idea: 
-   Use flatten to go through the AST to pull out all top level sends / receives. 
-   Iterate this list to build a mapping of receivers and senders (keyed by channel name).
-   Find every pairing of senders and receivers communicating on the same channel. For each
-   such pairing, apply the reduction rule to that communication to obtain a new AST. Recurse
-   on that AST.
+(* * General idea:
 
-   Technicalities:
-   To deal with variable bindings, add a preprocessing step where you iterate the AST and find
-   all occurences of new. If you find a new operator in the form of (new x).P in the AST, iterate
-   over P and replace all occurences of x with a new unique identifier. 
+   Use flatten to go through the AST to pull out all top level sends / receives.
+   Iterate this list to build a mapping of receivers and senders (keyed by
+   channel name). Find every pairing of senders and receivers communicating on
+   the same channel. For each such pairing, apply the reduction rule to that
+   communication to obtain a new AST. Recurse on that AST.
 
-   To deal with bang do the following in flatten. Whenever you encounter a bang, pull out a
-   copy of the underlying receive and add it to the list that flatten is building to be used 
-   in evaluate. When reducing, keep the bang in the AST.
+   * Technicalities:
+
+   To deal with variable bindings, add a preprocessing step
+   where you iterate the AST and find all occurences of new. If you find a new
+   operator in the form of (new x).P in the AST, iterate over P and replace all
+   occurences of x with a new unique identifier.
 *)
 
 type id = string
@@ -73,9 +71,7 @@ let allv (e : exp) : id HashSet.t =
    all "new" operators as well as during evaluation for the reduction step *)
 
 (* Substitute replacee by replacer in expression e, avoiding capture. *)
-(* IY: TODO See Section 2.7 for behavior of capture avoiding substitution. *)
 let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
-  (* IY: Invoking `Fresh.next fresh` should give you a fresh variable in this context. *)
   let fresh = Fresh.make (allv e) in
   let fvv = fv e in
   let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
@@ -85,10 +81,10 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
       let new_id2 = if id2 = replacee then replacer else id2 in
       Send(new_id1, new_id2)
     | Recv (id1, id2, e) | BangR (id1, id2, e)->
-      (* IY: TODO We need capture-avoiding substitution here. *)
       let new_id1 = if id1 = replacee then replacer else id1 in
-      (* If id2 is the same as the variable being substituted out, generate a new name and
-         substitute all occurrences of id2 in the subexpression with this new name *)
+      (* If id2 is the same as the variable being substituted out, generate a
+         new name and substitute all occurrences of id2 in the subexpression
+         with this new name *)
       let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
       let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
       Recv(new_id1, new_id2, new_e)
@@ -96,7 +92,8 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
       let new_e1 : exp = subst e1 replacee replacer in
       let new_e2 : exp = subst e2 replacee replacer in
       Par (new_e1, new_e2)
-    (* This case only arises during precomputation, so it's fine to leave the exp as is *)
+    (* This case only arises during precomputation, so it's fine to leave the
+    exp as is *)
     | New (id, e) -> New (id, e)
     | Zero -> Zero in
   subst e replacee replacer
@@ -119,5 +116,81 @@ let rec eliminate_new (e: exp) : exp =
     | _ -> e in
   eliminate_new e
 
-(* TODO *)
-let rec eval (e : exp) : exp list = [e]
+
+(* To deal with bang do the following in flatten. Whenever you encounter a bang,
+  * pull out a copy of the underlying receive and add it to the list that flatten
+  * is building to be used in evaluate. When reducing, keep the bang in the AST. *)
+let rec flatten (e : exp) : exp list =
+  match e with
+  | Par (e1, e2) -> flatten e1 @ flatten e2
+  | BangR (id1, id2, e) -> Recv (id1, id2, e) :: [e]
+  | e -> [e]
+
+(* Communications on channels is dealt with by keeping track of a map. *)
+module StringMap = Map.Make(String)
+
+open StringMap
+
+(* The returned channels is a list of channels, indexed by the channel string
+ * with values that keep track of the "sent list" and "receive list" over a
+ * channel.
+ *
+ * The input list [l : exp list] is the flattened "top-level" parallel
+ * processes, and we only care about the Send and Recv events on this level of
+ * exposure, so the function does not take a recursive call to its subexpressions.
+ *
+ * For instance, given the process
+ * [Send ("x", "Achoo!"); Recv ("x", "y", e))], the resulting map will have
+ * ("x", ([0], [1])).
+ *)
+let map_channels (l : (int * exp) list) =
+  let map_channels m (ie : int * exp) =
+    match ie with
+    | (i, Recv (id1, id2, e')) ->
+        let update_recv x = match x with
+                            | None -> Some ([],[i])
+                            | Some (sl, rl) -> Some (sl, i :: rl) in
+        update id1 update_recv m
+    | (i, Send (id1, id2)) ->
+        let update_send x = match x with
+                            | None -> Some ([i],[])
+                            | Some (sl, rl) -> Some (i :: sl, rl) in
+        update id1 update_send m
+    | _ -> m in
+  List.fold_left map_channels empty l
+
+(* Permutations from https://gist.github.com/Bamco/6151962 *)
+(* interleave 1 [2;3] = [ [1;2;3]; [2;1;3]; [2;3;1] ] *)
+let rec interleave x lst =
+  match lst with
+  | [] -> [[x]]
+  | hd::tl -> (x::lst) :: (List.map (fun y -> hd::y) (interleave x tl))
+
+let rec permutations lst =
+  match lst with
+  | hd::tl -> List.concat (List.map (interleave hd) (permutations tl))
+  | _ -> [lst]
+
+let rec take n list =
+  if n > 0 then
+    match list with
+    | [] -> failwith "Not enough elements in list"
+    | x :: xs -> x :: (take (n - 1) xs)
+  else []
+
+(* Given two lists, get all possible matchings of the elements in the lists. *)
+let rec matchings (l1 : 'a list) (l2 : 'b list) =
+  let min_length = min (List.length l1) (List.length l2) in
+  let (perms, l') =
+    if (List.compare_lengths l1 l2) < 0
+      then (permutations l2, l1) else (permutations l1, l2) in
+  let trimmed_perms = List.map (fun x -> take (List.length l') x) perms in
+  List.map (fun x -> List.combine x l') trimmed_perms
+
+let rec eval (e : exp) : exp list =
+  let flattened_list = flatten e in
+  let flattened_list_indexed = List.mapi (fun i x -> (i, x)) flattened_list in
+  let channels = map_channels flattened_list_indexed in
+  (* All possible communications along flattened list *)
+  let communications = map (fun (s, r) -> matchings s r) channels in
+failwith "Unimplemented"
