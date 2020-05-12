@@ -67,38 +67,7 @@ let allv (e : exp) : id HashSet.t =
     | Zero -> () in
   allv e; h
 
-(* The substitution function will be used in the precomputation step to eliminate
-   all "new" operators as well as during evaluation for the reduction step *)
-
-(* Substitute replacee by replacer in expression e, avoiding capture. *)
-let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
-  let fresh = Fresh.make (allv e) in
-  let fvv = fv e in
-  let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
-    match e with
-    | Send (id1, id2) ->
-      let new_id1 = if id1 = replacee then replacer else id1 in
-      let new_id2 = if id2 = replacee then replacer else id2 in
-      Send(new_id1, new_id2)
-    | Recv (id1, id2, e) | BangR (id1, id2, e)->
-      let new_id1 = if id1 = replacee then replacer else id1 in
-      (* If id2 is the same as the variable being substituted out, generate a
-         new name and substitute all occurrences of id2 in the subexpression
-         with this new name *)
-      let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
-      let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
-      Recv(new_id1, new_id2, new_e)
-    | Par (e1, e2) ->
-      let new_e1 : exp = subst e1 replacee replacer in
-      let new_e2 : exp = subst e2 replacee replacer in
-      Par (new_e1, new_e2)
-    (* This case only arises during precomputation, so it's fine to leave the
-    exp as is *)
-    (* TODO: capture-avoiding substitution needs to be done here.. *)
-    | New (id, e) -> New (id, e)
-    | Zero -> Zero in
-  subst e replacee replacer
-
+(* Naive version of subst that is only used for the pre and post computation steps *)
 let rec naive_subst (e : exp) (replacee : id) (replacer : id) : exp =
   match e with
   | Send (id1, id2) ->
@@ -158,6 +127,41 @@ let rec postcomputation (ell : exp list list) : exp list list =
     List.fold_right (fun id clean_e -> naive_subst clean_e id (clean_name id)) names_list e in
   List.map (fun el -> List.map clean_names el) ell
 
+
+(* Substitute replacee by replacer in expression e, avoiding capture. *)
+let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
+  let allvars = allv e in
+  HashSet.add allvars replacer ;
+  let fresh = Fresh.make (allvars) in
+  let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
+    match e with
+    | Send (id1, id2) ->
+      let new_id1 = if id1 = replacee then replacer else id1 in
+      let new_id2 = if id2 = replacee then replacer else id2 in
+      Send(new_id1, new_id2)
+    | Recv (id1, id2, e) ->
+      let new_id1 = if id1 = replacee then replacer else id1 in
+      (* If id2 is the same as the variable being substituted out, generate a
+         new name and substitute all occurrences of id2 in the subexpression
+         with this new name *)
+      let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
+      let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
+      Recv(new_id1, new_id2, new_e)
+    | BangR (id1, id2, e) ->
+      let new_id1 = if id1 = replacee then replacer else id1 in
+      let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
+      let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
+      BangR(new_id1, new_id2, new_e)
+    | Par (e1, e2) ->
+      let new_e1 : exp = subst e1 replacee replacer in
+      let new_e2 : exp = subst e2 replacee replacer in
+      Par (new_e1, new_e2)
+    | New (id, e) ->
+      let new_id = if id = replacee then Fresh.next fresh else id in
+      let new_e = if id = replacee then (subst e id new_id) else (subst e replacee replacer) in
+      New (new_id, new_e)
+    | Zero -> Zero in
+  subst e replacee replacer
 
 
 (* To deal with bang do the following in flatten. Whenever you encounter a bang,
@@ -280,4 +284,14 @@ let _ =
 
   print_endline ("orig: " ^ to_string example1) ; 
   print_endline ("pre: " ^ to_string example1_precomputed) ; 
-  print_endline ("post: " ^ to_string example1_postcomputed)
+  print_endline ("post: " ^ to_string example1_postcomputed) ;
+
+  let sub_example2 = Par(Send("w", "z"), Recv("z", "w", Zero)) in
+  let sub_example2_subst = subst sub_example2 "z" "x" in
+  print_endline("subst1: " ^ to_string sub_example2_subst) ;
+
+  let example2 = Par(Send("x", "y"), Recv("y", "z", Par(Send("w", "z"), Recv("z", "v", Zero)))) in
+  let example2_subst = subst example2 "y" "k" in
+  print_endline("subst2: " ^ to_string example2_subst) ;
+
+  (* let rec subst (e : exp) (replacee : id) (replacer : id) : exp = *)
