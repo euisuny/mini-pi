@@ -94,6 +94,7 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
       Par (new_e1, new_e2)
     (* This case only arises during precomputation, so it's fine to leave the
     exp as is *)
+    (* TODO: capture-avoiding substitution needs to be done here.. *)
     | New (id, e) -> New (id, e)
     | Zero -> Zero in
   subst e replacee replacer
@@ -229,15 +230,33 @@ let rec matchings (l1 : 'a list) (l2 : 'b list) =
   let trimmed_perms = List.map (fun x -> take (List.length l') x) perms in
   List.map (fun x -> List.combine x l') trimmed_perms
 
-let rec eval (e : exp) : exp list =
+let message_pass (comm_pair : exp * exp) : exp * exp =
+  match comm_pair with
+  | (Send (c, v), Recv (c', x, e')) | (Recv (c', x, e'), Send (c, v)) -> (Zero, subst e' x v)
+      (* subst must work for all fn's *)
+  | _ -> failwith "Non-message passing communication"
+
+let swap_message_pass (flattened_list : exp list) (i1 : int) (i2 : int) : exp list =
+  let (e1, e2) = message_pass (List.nth flattened_list i1, List.nth flattened_list i2) in
+  List.mapi (fun i x -> if i = i1 then e1 else if i = i2 then e2 else x) flattened_list
+
+let rec eval (e : exp) : exp list list =
   let flattened_list = flatten e in
   let flattened_list_indexed = List.mapi (fun i x -> (i, x)) flattened_list in
   let channels = map_channels flattened_list_indexed in
-  (* All possible communications along flattened list *)
-  let communications = map (fun (s, r) -> matchings s r) channels in
-failwith "Unimplemented"
+  (* All possible communications along flattened list, indexed by channels *)
+  let channel_communications = map (fun (s, r) -> matchings s r) channels |> bindings in
+  (* Retreiving all possible pairs of communications, not regarding channels *)
+  let pairs_communications = List.map (fun (a, b) -> b) channel_communications |> List.flatten |> List.flatten in
+  List.map (fun (i1, i2) -> swap_message_pass flattened_list i1 i2) pairs_communications
+
+let pretty_print (e : exp list list) =
+   e |> List.iter (fun l -> List.iteri (fun i x -> if i = List.length l - 1 then Printf.printf "%s\n" (to_string x)
+                                                  else Printf.printf "%s | " (to_string x)) l)
 
 let _ =
+  eval (Par (Send ("x", "hi" ), Recv ("x", "y", Zero))) |> pretty_print ;
+
   let example1 =
     Par(
       Par(Send("x", "y"),
@@ -262,4 +281,3 @@ let _ =
   print_endline ("orig: " ^ to_string example1) ; 
   print_endline ("pre: " ^ to_string example1_precomputed) ; 
   print_endline ("post: " ^ to_string example1_postcomputed)
-
