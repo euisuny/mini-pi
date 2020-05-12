@@ -124,7 +124,7 @@ let rec eliminate_new (e: exp) : exp =
 let rec flatten (e : exp) : exp list =
   match e with
   | Par (e1, e2) -> flatten e1 @ flatten e2
-  | BangR (id1, id2, e) -> Recv (id1, id2, e) :: [e]
+  | BangR (id1, id2, e') -> Recv (id1, id2, e') :: [e]
   | e -> [e]
 
 (* Communications on channels is dealt with by keeping track of a map. *)
@@ -209,7 +209,22 @@ let rec eval (e : exp) : exp list list =
   List.map (fun (i1, i2) -> swap_message_pass flattened_list i1 i2) pairs_communications
 
 let pretty_print (e : exp list list) =
-  e |> List.iter (fun l -> List.iteri (fun i x -> if i = List.length l - 1 then Printf.printf "%s\n" (to_string x)
+  e |> List.iter (fun l -> List.iteri (fun i x -> if i = List.length l - 1 then Printf.printf "%s\n\t" (to_string x)
                                                   else Printf.printf "%s | " (to_string x)) l)
 
-let _ = eval (Par (Send ("x", "hi" ), Recv ("x", "y", Zero))) |> pretty_print
+let e1 = (Par (Send ("x", "hi" ), Recv ("x", "y", Zero)))
+let e2 = (Par (Send ("x", "hi" ), Par (Send ("x", "bye"), Recv ("x", "y", Zero))))
+let e3 = (Par (Send ("x", "hi" ), BangR ("x", "y", Zero)))
+
+let test_suite = [e1; e2; e3]
+
+let test (e : exp list) =
+  let test_eval (e : exp) =
+    Printf.printf "Original expression: \n \t %s \n" (to_string e);
+    Printf.printf "Reduced expressions: \n \t";
+    eval e |> pretty_print;
+    Printf.printf "\n" in
+  List.iter test_eval e
+
+let _ = test test_suite
+
