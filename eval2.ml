@@ -371,13 +371,22 @@ let _ =
   print_endline ("pre: " ^ to_string example1_precomputed) ; 
   print_endline ("post: " ^ to_string example1_postcomputed) ;
 
+(** *Testing subst function ======================== *)
+
   let sub_example2 = Par(Send("w", "z"), Recv("z", "w", Zero)) in
   let sub_example2_subst = subst sub_example2 "z" "x" in
   print_endline("subst1: " ^ to_string sub_example2_subst) ;
 
   let example2 = Par(Send("x", "y"), Recv("y", "z", Par(Send("w", "z"), Recv("z", "v", Zero)))) in
   let example2_subst = subst example2 "y" "k" in
-  print_endline("subst2: " ^ to_string example2_subst)
+  print_endline("orig: " ^ to_string example2) ;
+  print_endline("subst2: " ^ to_string example2_subst);
+
+  let example3 = Par(Send("x", "y"), Recv("y", "y", Par(Send("w", "y"), Recv("y", "y", New("y~", Send("y~", "y~")))))) in
+  let example3_subst = subst example3 "y" "k" in
+  print_endline("orig: " ^ to_string example3) ;
+  print_endline("subst3: " ^ to_string example3_subst) ;
+()
 
 (** ====== Testing message passing evaluation ================================= *)
 
