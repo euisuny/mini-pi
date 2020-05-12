@@ -98,23 +98,65 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
     | Zero -> Zero in
   subst e replacee replacer
 
-let rec eliminate_new (e: exp) : exp =
-  let fresh = Fresh.make (allv e) in
-  let rec eliminate_new (e : exp) : exp =
+let rec naive_subst (e : exp) (replacee : id) (replacer : id) : exp =
+  match e with
+  | Send (id1, id2) ->
+    let new_id1 = if id1 = replacee then replacer else id1 in
+    let new_id2 = if id2 = replacee then replacer else id2 in
+    Send(new_id1, new_id2)
+  | Recv (id1, id2, e) ->
+    let new_id1 = if id1 = replacee then replacer else id1 in
+    let new_id2 = if id2 = replacee then replacer else id2 in
+    let new_e = naive_subst e replacee replacer in
+    Recv (new_id1, new_id2, new_e)
+  | BangR (id1, id2, e)->
+    let new_id1 = if id1 = replacee then replacer else id1 in
+    let new_id2 = if id2 = replacee then replacer else id2 in
+    let new_e = naive_subst e replacee replacer in
+    BangR (new_id1, new_id2, new_e)
+  | Par (e1, e2) ->
+    let new_e1 : exp = naive_subst e1 replacee replacer in
+    let new_e2 : exp = naive_subst e2 replacee replacer in
+    Par (new_e1, new_e2)
+  | New (id, e) -> 
+    let new_id = if id = replacee then replacer else id in
+    let new_e = naive_subst e replacee replacer in
+    New (new_id, new_e)
+  | Zero -> Zero
+
+let clean_name (id: id) : id =
+  List.hd(String.split_on_char '~' id)
+
+let rec precomputation (e: exp) : exp =
+  let make_unique (r: int ref) (id: id) : id =
+    let id = clean_name id in
+    let suffix = String.init !r (fun _ -> '~') in
+    r := !r + 1 ;
+    id ^ suffix in
+
+  let r : int ref = ref 1 in
+  let rec precomputation (e: exp) (r: int ref) : exp = 
     match e with
     | New (id, e) ->
-      let new_id = Fresh.next fresh in
-      let new_e = subst e id new_id in
-      (* Remove the New operator from the tree *)
-      eliminate_new new_e
-    | Recv (id1, id2, e) -> Recv (id1, id2, eliminate_new e)
-    | BangR (id1, id2, e) -> BangR (id1, id2, eliminate_new e)
+      let new_id = make_unique r id in
+      let renamed_e = naive_subst e id new_id in
+      let new_e = precomputation renamed_e r in
+      New (new_id, new_e)
+    | Recv (id1, id2, e) -> Recv (id1, id2, precomputation e r)
+    | BangR (id1, id2, e) -> BangR (id1, id2, precomputation e r)
     | Par (e1, e2) ->
-      let new_e1 = eliminate_new e1 in
-      let new_e2 = eliminate_new e2 in
+      let new_e1 = precomputation e1 r in
+      let new_e2 = precomputation e2 r in
       Par(new_e1, new_e2)
     | _ -> e in
-  eliminate_new e
+  precomputation e r
+
+let rec postcomputation (ell : exp list list) : exp list list =
+  let rec clean_names (e : exp) : exp =
+    let names_list = HashSet.values (allv e) in
+    List.fold_right (fun id clean_e -> naive_subst clean_e id (clean_name id)) names_list e in
+  List.map (fun el -> List.map clean_names el) ell
+
 
 
 (* To deal with bang do the following in flatten. Whenever you encounter a bang,
@@ -194,3 +236,30 @@ let rec eval (e : exp) : exp list =
   (* All possible communications along flattened list *)
   let communications = map (fun (s, r) -> matchings s r) channels in
 failwith "Unimplemented"
+
+let _ =
+  let example1 =
+    Par(
+      Par(Send("x", "y"),
+          Recv("y", "z",
+               New("z",
+                   New("z",
+                       Par(
+                         Send("x", "y"),
+                         Recv("y", "z", Zero)
+                       )
+                      )
+                  )
+              )
+         ),
+      New("y",
+          Par(Send("x", "y"), Recv("y", "z", Zero))
+         )
+    ) in
+  let example1_precomputed = precomputation example1 in
+  let example1_postcomputed = List.hd (List.hd (postcomputation [[example1]])) in
+
+  print_endline ("orig: " ^ to_string example1) ; 
+  print_endline ("pre: " ^ to_string example1_precomputed) ; 
+  print_endline ("post: " ^ to_string example1_postcomputed)
+
