@@ -1,6 +1,12 @@
 open Util
 open Printf
 
+(** *===========================================================================*)
+(**                                                                             *)
+(**                        π - CALCULUS EVALUATOR                               *)
+(**                                                                             *)
+(** *===========================================================================*)
+
 (* * General idea:
 
    Use flatten to go through the AST to pull out all top level sends / receives.
@@ -19,7 +25,10 @@ open Printf
 
 type id = string
 
-(* Core Pict AST *)
+
+(** *===========================================================================*)
+(** Language : Core Pict AST                                                    *)
+(** *===========================================================================*)
 type exp =
   | Send of id * id
   | Recv of id * id * exp
@@ -28,6 +37,9 @@ type exp =
   | New of id * exp
   | Zero
 
+(** *===========================================================================*)
+(** Utility Functions                                                           *)
+(** *===========================================================================*)
 let rec to_string (e : exp) =
   match e with
   | Send (c, v) -> sprintf "%s!%s" c v
@@ -37,6 +49,42 @@ let rec to_string (e : exp) =
   | New (v, p) -> sprintf "new %s %s" v (to_string p)
   | Zero -> sprintf "0"
 
+(* Communications on channels is dealt with by keeping track of a map. *)
+module StringMap = Map.Make(String)
+
+open StringMap
+
+(* Remove duplicates in a list using HashSet. *)
+let remove_duplicates (l : 'a list) : 'a list =
+  let h = HashSet.make () in
+  List.iter (fun x -> HashSet.add h x) l;
+  h |> HashSet.values
+
+(* Permutations from https://gist.github.com/Bamco/6151962 *)
+(* interleave 1 [2;3] = [ [1;2;3]; [2;1;3]; [2;3;1] ] *)
+let rec interleave x lst =
+  match lst with
+  | [] -> [[x]]
+  | hd::tl -> (x::lst) :: (List.map (fun y -> hd::y) (interleave x tl))
+
+let rec permutations lst =
+  match lst with
+  | hd::tl -> List.concat (List.map (interleave hd) (permutations tl))
+  | _ -> [lst]
+
+
+let rec take n list =
+  if n > 0 then
+    match list with
+    | [] -> failwith "Not enough elements in list"
+    | x :: xs -> x :: (take (n - 1) xs)
+  else []
+
+(** *===========================================================================*)
+(** Variable Substitution Utility Functions                                     *)
+(** *===========================================================================*)
+
+(* Get all free variables of an expression. *)
 let fv (e : exp) : id HashSet.t =
   let h = HashSet.make () in
   let rec fv (bv : id list) (e : exp) : unit =
@@ -66,6 +114,45 @@ let allv (e : exp) : id HashSet.t =
     | New (v, p) -> HashSet.add h v; allv p
     | Zero -> () in
   allv e; h
+
+(* Substitute replacee by replacer in expression e, avoiding capture. *)
+let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
+  let allvars = allv e in
+  HashSet.add allvars replacer ;
+  let fresh = Fresh.make (allvars) in
+  let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
+    match e with
+    | Send (id1, id2) ->
+      let new_id1 = if id1 = replacee then replacer else id1 in
+      let new_id2 = if id2 = replacee then replacer else id2 in
+      Send(new_id1, new_id2)
+    | Recv (id1, id2, e) ->
+      let new_id1 = if id1 = replacee then replacer else id1 in
+      (* If id2 is the same as the variable being substituted out, generate a
+         new name and substitute all occurrences of id2 in the subexpression
+         with this new name *)
+      let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
+      let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
+      Recv(new_id1, new_id2, new_e)
+    | BangR (id1, id2, e) ->
+      let new_id1 = if id1 = replacee then replacer else id1 in
+      let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
+      let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
+      BangR(new_id1, new_id2, new_e)
+    | Par (e1, e2) ->
+      let new_e1 : exp = subst e1 replacee replacer in
+      let new_e2 : exp = subst e2 replacee replacer in
+      Par (new_e1, new_e2)
+    | New (id, e) ->
+      let new_id = if id = replacee then Fresh.next fresh else id in
+      let new_e = if id = replacee then (subst e id new_id) else (subst e replacee replacer) in
+      New (new_id, new_e)
+    | Zero -> Zero in
+  subst e replacee replacer
+
+(** *===========================================================================*)
+(** Pre- and Post- Computation                                                  *)
+(** *===========================================================================*)
 
 (* Naive version of subst that is only used for the pre and post computation steps *)
 let rec naive_subst (e : exp) (replacee : id) (replacer : id) : exp =
@@ -127,78 +214,12 @@ let rec postcomputation (ell : exp list list) : exp list list =
     List.fold_right (fun id clean_e -> naive_subst clean_e id (clean_name id)) names_list e in
   List.map (fun el -> List.map clean_names el) ell
 
-(* Substitute replacee by replacer in expression e, avoiding capture. *)
-let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
-  let allvars = allv e in
-  HashSet.add allvars replacer ;
-  let fresh = Fresh.make (allvars) in
-  let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
-    match e with
-    | Send (id1, id2) ->
-      let new_id1 = if id1 = replacee then replacer else id1 in
-      let new_id2 = if id2 = replacee then replacer else id2 in
-      Send(new_id1, new_id2)
-    | Recv (id1, id2, e) ->
-      let new_id1 = if id1 = replacee then replacer else id1 in
-      (* If id2 is the same as the variable being substituted out, generate a
-         new name and substitute all occurrences of id2 in the subexpression
-         with this new name *)
-      let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
-      let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
-      Recv(new_id1, new_id2, new_e)
-    | BangR (id1, id2, e) ->
-      let new_id1 = if id1 = replacee then replacer else id1 in
-      let new_id2 = if id2 = replacee then Fresh.next fresh else id2 in
-      let new_e = if id2 = replacee then (subst e id2 new_id2) else (subst e replacee replacer) in
-      BangR(new_id1, new_id2, new_e)
-    | Par (e1, e2) ->
-      let new_e1 : exp = subst e1 replacee replacer in
-      let new_e2 : exp = subst e2 replacee replacer in
-      Par (new_e1, new_e2)
-    | New (id, e) ->
-      let new_id = if id = replacee then Fresh.next fresh else id in
-      let new_e = if id = replacee then (subst e id new_id) else (subst e replacee replacer) in
-      New (new_id, new_e)
-    | Zero -> Zero in
-  subst e replacee replacer
+(** *===========================================================================*)
+(** Message-passing Evaluation                                                  *)
+(** *===========================================================================*)
 
-(** *2. Reducing message passing ======================== *)
+(* ===== Keeping track of channels ============================================ *)
 
-(* To deal with bang do the following in flatten. Whenever you encounter a bang,
-  * pull out a copy of the underlying receive and add it to the list that flatten
-  * is building to be used in evaluate. When reducing, keep the bang in the AST. *)
-let rec flatten (e : exp) : exp list =
-  match e with
-  | Par (e1, e2) -> flatten e1 @ flatten e2
-  | BangR (id1, id2, e') -> Recv (id1, id2, e') :: [e]
-  | e -> [e]
-
-(* ===== Utility functions ======= *)
-(* Communications on channels is dealt with by keeping track of a map. *)
-module StringMap = Map.Make(String)
-
-open StringMap
-
-(* Permutations from https://gist.github.com/Bamco/6151962 *)
-(* interleave 1 [2;3] = [ [1;2;3]; [2;1;3]; [2;3;1] ] *)
-let rec interleave x lst =
-  match lst with
-  | [] -> [[x]]
-  | hd::tl -> (x::lst) :: (List.map (fun y -> hd::y) (interleave x tl))
-
-let rec permutations lst =
-  match lst with
-  | hd::tl -> List.concat (List.map (interleave hd) (permutations tl))
-  | _ -> [lst]
-
-let rec take n list =
-  if n > 0 then
-    match list with
-    | [] -> failwith "Not enough elements in list"
-    | x :: xs -> x :: (take (n - 1) xs)
-  else []
-
-(* ===== Keeping track of channels ======= *)
 (* The returned channels is a list of channels, indexed by the channel string
  * with values that keep track of the "sent list" and "receive list" over a
  * channel.
@@ -247,11 +268,29 @@ let swap_message_pass (l : exp list) (i1 : int) (i2 : int) : exp list =
   let (e1, e2) = message_pass (List.nth l i1, List.nth l i2) in
   List.mapi (fun i x -> if i = i1 then e1 else if i = i2 then e2 else x) l
 
-(* ===== Evaluation of processed expression ====== *)
+(* To deal with bang do the following in flatten. Whenever you encounter a bang,
+  * pull out a copy of the underlying receive and add it to the list that flatten
+  * is building to be used in evaluate. When reducing, keep the bang in the AST. *)
+let rec flatten (e : exp) : exp list =
+  match e with
+  | Par (e1, e2) -> flatten e1 @ flatten e2
+  | e -> [e]
+
+let unfold_bang (e : exp list) : exp list =
+  let unfold_bang (e : exp) : exp list =
+    match e with
+    | BangR (id1, id2, e') -> Recv (id1, id2, e') :: [e]
+    | e -> [e] in
+  List.map unfold_bang e |> List.flatten
+
+(* ===== Evaluation of processed expression ================================== *)
+
 (* This function takes care of a single "evaluation" of a pi-calc expression,
  * assuming that it has already been processed (i.e. no "New" operators) *)
-let eval_flattened_exp (flattened_list : exp list) : exp list list =
-  let flattened_list_indexed = List.mapi (fun i x -> (i, x)) flattened_list in
+let eval_flattened (e : exp list) : exp list list =
+  (* Every evaluation step does a lazy unfolding of bang. *)
+  let exp_list = unfold_bang e in
+  let flattened_list_indexed = List.mapi (fun i x -> (i, x)) exp_list in
   (* Get the mapping of communications along channels *)
   let channels = map_channels flattened_list_indexed in
 
@@ -265,49 +304,46 @@ let eval_flattened_exp (flattened_list : exp list) : exp list list =
 
   (* Resulting evaluation swaps out the possible message passing communications with
    * original indexed list. *)
-  List.map (fun (i1, i2) -> swap_message_pass flattened_list i1 i2) pairs_communications
+  let result = List.map (fun (i1, i2) -> swap_message_pass exp_list i1 i2)
+    pairs_communications in
+
+  (* If there were no communications, return flattened list with bang unfolding. *)
+  if List.length result = 0 then [exp_list] else result |> remove_duplicates
 
 let eval (e : exp) : exp list list =
-  let flattened_list = flatten e in
-  eval_flattened_exp flattened_list
+  flatten e |> eval_flattened
 
-(* ===== Fuel-based evaluation ====== *)
+(* ===== Fuel-based evaluation =============================================== *)
 (* Since some pi-calc expressions may never terminate, each step of evaluation is
  * a form of lazy evaluation. (The bang is always left as a thunk.) As an approximating
  * evaluation to diverging compuation, we provide a fuel-based evaluation. *)
-let rec fuel_eval (e : exp list) (fuel : int) : exp list list =
-  if fuel = 0 then eval_flattened_exp e else
-    let step : exp list list = eval_flattened_exp e in
-    List.fold_left (fun acc x -> acc @ fuel_eval x (fuel - 1)) step []
+let fuel (x : int) (e : exp): exp list list =
+  let rec fuel_eval (e : exp list) (fuel : int) : exp list list =
+    (* Printf.printf "DEBUG fuel step: %d \n\t" fuel ; *)
+    if fuel = 0 then eval_flattened e else
+      let step : exp list list = eval_flattened e in
+      (* debug step; *)
+      let result = List.map (fun (x : exp list) -> fuel_eval x (fuel - 1)) step |> List.flatten in
+      result |> remove_duplicates
+ in
+  fuel_eval (flatten e) x
 
+
+(* TODO: Introduce backtracking to observe that bang-unfolding doesn't do anything in
+ * the next fuel step. *)
+
+(** ============================================================================*)
+(** Top-level Evaluator, with Pre-and Post- Processing                          *)
 (** *===========================================================================*)
+
+let pi_eval (e : exp) (i : int) : exp list list =
+  e |> precomputation |> fuel i |> postcomputation
+
+(** ============================================================================*)
 (** Testing                                                                     *)
 (** *===========================================================================*)
 
-(** *Testing message passing evaluation ======================== *)
-  
-let pretty_print (e : exp list list) =
-  e |> List.iter (fun l -> List.iteri (fun i x -> if i = List.length l - 1
-                                      then Printf.printf "%s\n\t" (to_string x)
-                                      else Printf.printf "%s | " (to_string x)) l)
-
-let e1 = (Par (Send ("x", "hi" ), Recv ("x", "y", Zero)))
-let e2 = (Par (Send ("x", "hi" ), Par (Send ("x", "bye"), Recv ("x", "y", Zero))))
-let e3 = (Par (Send ("x", "hi" ), BangR ("x", "y", Zero)))
-
-let test_suite = [e1; e2; e3]
-
-let test (fn : exp -> exp list list) (e : exp list) =
-  let test_eval (fn : exp -> exp list list) (e : exp) =
-    Printf.printf "Original expression: \n \t %s \n" (to_string e);
-    Printf.printf "Reduced expressions: \n \t";
-    fn e |> pretty_print;
-    Printf.printf "\n" in
-  List.iter (test_eval fn) e
-
-let _ = test eval test_suite
-
-(** *Testing pre and post processing functions ======================== *)
+(** ===== Testing pre and post processing functions =========================== *)
 
 let _ =
   let example1 =
@@ -341,6 +377,35 @@ let _ =
 
   let example2 = Par(Send("x", "y"), Recv("y", "z", Par(Send("w", "z"), Recv("z", "v", Zero)))) in
   let example2_subst = subst example2 "y" "k" in
-  print_endline("subst2: " ^ to_string example2_subst) ;
+  print_endline("subst2: " ^ to_string example2_subst)
 
-  (* let rec subst (e : exp) (replacee : id) (replacer : id) : exp = *)
+(** ====== Testing message passing evaluation ================================= *)
+
+let pretty_print (e : exp list list) =
+  e |> List.iter (fun l -> List.iteri (fun i x -> if i = List.length l - 1
+                                      then Printf.printf "%s\n\t" (to_string x)
+                                      else Printf.printf "%s | " (to_string x)) l)
+
+let e0 = Par (Zero, Zero)
+let e1 = (Par (Send ("x", "hi" ), Recv ("x", "y", Zero)))
+let e2 = (Par (Send ("x", "hi" ), Par (Send ("x", "bye"), Recv ("x", "y", Zero))))
+let e3 = (Par (Send ("x", "hi" ), BangR ("x", "y", Zero)))
+let e4 = (Par (Par (BangR ("y", "k", Zero), Send ("x", "hi" )),
+  Par (Send ("x", "bye"), Par (BangR ("x", "y", Zero), Send ("y", "Hi")))))
+
+let test_suite = [e0; e1; e2; e3; e4]
+
+let test (fn : exp -> exp list list) (e : exp list) =
+  let test_eval (fn : exp -> exp list list) (e : exp) =
+    Printf.printf "Original expression: \n \t %s \n" (to_string e);
+    Printf.printf "Reduced expressions: \n \t";
+    fn e |> pretty_print;
+    Printf.printf "\n" in
+  List.iter (test_eval fn) e
+
+let _ =
+        Printf.printf "========== Eval Testing ===========\n";
+        test eval test_suite;
+        Printf.printf "========== Fuel Testing ===========\n";
+        test (fuel 3) test_suite;
+()
