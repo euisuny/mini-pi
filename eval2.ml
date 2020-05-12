@@ -246,10 +246,8 @@ let swap_message_pass (l : exp list) (i1 : int) (i2 : int) : exp list =
 (* ===== Evaluation of processed expression ====== *)
 (* This function takes care of a single "evaluation" of a pi-calc expression,
  * assuming that it has already been processed (i.e. no "New" operators) *)
-let rec eval (e : exp) : exp list list =
-  let flattened_list = flatten e in
+let eval_flattened_exp (flattened_list : exp list) : exp list list =
   let flattened_list_indexed = List.mapi (fun i x -> (i, x)) flattened_list in
-
   (* Get the mapping of communications along channels *)
   let channels = map_channels flattened_list_indexed in
 
@@ -265,6 +263,18 @@ let rec eval (e : exp) : exp list list =
    * original indexed list. *)
   List.map (fun (i1, i2) -> swap_message_pass flattened_list i1 i2) pairs_communications
 
+let eval (e : exp) : exp list list =
+  let flattened_list = flatten e in
+  eval_flattened_exp flattened_list
+
+(* ===== Fuel-based evaluation ====== *)
+(* Since some pi-calc expressions may never terminate, each step of evaluation is
+ * a form of lazy evaluation. (The bang is always left as a thunk.) As an approximating
+ * evaluation to diverging compuation, we provide a fuel-based evaluation. *)
+let rec fuel_eval (e : exp list) (fuel : int) : exp list list =
+  if fuel = 0 then eval_flattened_exp e else
+    let step : exp list list = eval_flattened_exp e in
+    List.fold_left (fun acc x -> acc @ fuel_eval x (fuel - 1)) step []
 
 (** *===========================================================================*)
 (** Testing                                                                     *)
@@ -283,15 +293,15 @@ let e3 = (Par (Send ("x", "hi" ), BangR ("x", "y", Zero)))
 
 let test_suite = [e1; e2; e3]
 
-let test (e : exp list) =
-  let test_eval (e : exp) =
+let test (fn : exp -> exp list list) (e : exp list) =
+  let test_eval (fn : exp -> exp list list) (e : exp) =
     Printf.printf "Original expression: \n \t %s \n" (to_string e);
     Printf.printf "Reduced expressions: \n \t";
-    eval e |> pretty_print;
+    fn e |> pretty_print;
     Printf.printf "\n" in
-  List.iter test_eval e
+  List.iter (test_eval fn) e
 
-let _ = test test_suite
+let _ = test eval test_suite
 
 (** *Testing pre and post processing functions ======================== *)
 
@@ -318,5 +328,5 @@ let _ =
   let example1_postcomputed = List.hd (List.hd (postcomputation [[example1]])) in
 
   print_endline ("orig: " ^ to_string example1) ; 
-  print_endline ("pre: " ^ to_string example1_precomputed) ; 
+  print_endline ("pre: " ^ to_string example1_precomputed) ;
   print_endline ("post: " ^ to_string example1_postcomputed)
