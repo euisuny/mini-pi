@@ -127,7 +127,6 @@ let rec postcomputation (ell : exp list list) : exp list list =
     List.fold_right (fun id clean_e -> naive_subst clean_e id (clean_name id)) names_list e in
   List.map (fun el -> List.map clean_names el) ell
 
-
 (* Substitute replacee by replacer in expression e, avoiding capture. *)
 let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
   let allvars = allv e in
@@ -163,6 +162,7 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
     | Zero -> Zero in
   subst e replacee replacer
 
+(** *2. Reducing message passing ======================== *)
 
 (* To deal with bang do the following in flatten. Whenever you encounter a bang,
   * pull out a copy of the underlying receive and add it to the list that flatten
@@ -170,14 +170,35 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
 let rec flatten (e : exp) : exp list =
   match e with
   | Par (e1, e2) -> flatten e1 @ flatten e2
-  | BangR (id1, id2, e) -> Recv (id1, id2, e) :: [e]
+  | BangR (id1, id2, e') -> Recv (id1, id2, e') :: [e]
   | e -> [e]
 
+(* ===== Utility functions ======= *)
 (* Communications on channels is dealt with by keeping track of a map. *)
 module StringMap = Map.Make(String)
 
 open StringMap
 
+(* Permutations from https://gist.github.com/Bamco/6151962 *)
+(* interleave 1 [2;3] = [ [1;2;3]; [2;1;3]; [2;3;1] ] *)
+let rec interleave x lst =
+  match lst with
+  | [] -> [[x]]
+  | hd::tl -> (x::lst) :: (List.map (fun y -> hd::y) (interleave x tl))
+
+let rec permutations lst =
+  match lst with
+  | hd::tl -> List.concat (List.map (interleave hd) (permutations tl))
+  | _ -> [lst]
+
+let rec take n list =
+  if n > 0 then
+    match list with
+    | [] -> failwith "Not enough elements in list"
+    | x :: xs -> x :: (take (n - 1) xs)
+  else []
+
+(* ===== Keeping track of channels ======= *)
 (* The returned channels is a list of channels, indexed by the channel string
  * with values that keep track of the "sent list" and "receive list" over a
  * channel.
@@ -206,25 +227,6 @@ let map_channels (l : (int * exp) list) =
     | _ -> m in
   List.fold_left map_channels empty l
 
-(* Permutations from https://gist.github.com/Bamco/6151962 *)
-(* interleave 1 [2;3] = [ [1;2;3]; [2;1;3]; [2;3;1] ] *)
-let rec interleave x lst =
-  match lst with
-  | [] -> [[x]]
-  | hd::tl -> (x::lst) :: (List.map (fun y -> hd::y) (interleave x tl))
-
-let rec permutations lst =
-  match lst with
-  | hd::tl -> List.concat (List.map (interleave hd) (permutations tl))
-  | _ -> [lst]
-
-let rec take n list =
-  if n > 0 then
-    match list with
-    | [] -> failwith "Not enough elements in list"
-    | x :: xs -> x :: (take (n - 1) xs)
-  else []
-
 (* Given two lists, get all possible matchings of the elements in the lists. *)
 let rec matchings (l1 : 'a list) (l2 : 'b list) =
   let min_length = min (List.length l1) (List.length l2) in
@@ -234,33 +236,70 @@ let rec matchings (l1 : 'a list) (l2 : 'b list) =
   let trimmed_perms = List.map (fun x -> take (List.length l') x) perms in
   List.map (fun x -> List.combine x l') trimmed_perms
 
+(* Given a pair of expressions that are message passing, perform the message pass. *)
 let message_pass (comm_pair : exp * exp) : exp * exp =
   match comm_pair with
-  | (Send (c, v), Recv (c', x, e')) | (Recv (c', x, e'), Send (c, v)) -> (Zero, subst e' x v)
-      (* subst must work for all fn's *)
+  | (Send (c, v), Recv (c', x, e')) | (Recv (c', x, e'), Send (c, v)) ->
+      (Zero, subst e' x v)
   | _ -> failwith "Non-message passing communication"
 
-let swap_message_pass (flattened_list : exp list) (i1 : int) (i2 : int) : exp list =
-  let (e1, e2) = message_pass (List.nth flattened_list i1, List.nth flattened_list i2) in
-  List.mapi (fun i x -> if i = i1 then e1 else if i = i2 then e2 else x) flattened_list
+let swap_message_pass (l : exp list) (i1 : int) (i2 : int) : exp list =
+  let (e1, e2) = message_pass (List.nth l i1, List.nth l i2) in
+  List.mapi (fun i x -> if i = i1 then e1 else if i = i2 then e2 else x) l
 
+(* ===== Evaluation of processed expression ====== *)
+(* This function takes care of a single "evaluation" of a pi-calc expression,
+ * assuming that it has already been processed (i.e. no "New" operators) *)
 let rec eval (e : exp) : exp list list =
   let flattened_list = flatten e in
   let flattened_list_indexed = List.mapi (fun i x -> (i, x)) flattened_list in
+
+  (* Get the mapping of communications along channels *)
   let channels = map_channels flattened_list_indexed in
+
   (* All possible communications along flattened list, indexed by channels *)
-  let channel_communications = map (fun (s, r) -> matchings s r) channels |> bindings in
+  let channel_communications = map (fun (s, r) -> matchings s r) channels
+    |> bindings in
+
   (* Retreiving all possible pairs of communications, not regarding channels *)
-  let pairs_communications = List.map (fun (a, b) -> b) channel_communications |> List.flatten |> List.flatten in
+  let pairs_communications = List.map (fun (a, b) -> b) channel_communications
+    |> List.flatten |> List.flatten in
+
+  (* Resulting evaluation swaps out the possible message passing communications with
+   * original indexed list. *)
   List.map (fun (i1, i2) -> swap_message_pass flattened_list i1 i2) pairs_communications
 
+
+(** *===========================================================================*)
+(** Testing                                                                     *)
+(** *===========================================================================*)
+
+(** *Testing message passing evaluation ======================== *)
+
 let pretty_print (e : exp list list) =
-   e |> List.iter (fun l -> List.iteri (fun i x -> if i = List.length l - 1 then Printf.printf "%s\n" (to_string x)
-                                                  else Printf.printf "%s | " (to_string x)) l)
+  e |> List.iter (fun l -> List.iteri (fun i x -> if i = List.length l - 1
+                                      then Printf.printf "%s\n\t" (to_string x)
+                                      else Printf.printf "%s | " (to_string x)) l)
+
+let e1 = (Par (Send ("x", "hi" ), Recv ("x", "y", Zero)))
+let e2 = (Par (Send ("x", "hi" ), Par (Send ("x", "bye"), Recv ("x", "y", Zero))))
+let e3 = (Par (Send ("x", "hi" ), BangR ("x", "y", Zero)))
+
+let test_suite = [e1; e2; e3]
+
+let test (e : exp list) =
+  let test_eval (e : exp) =
+    Printf.printf "Original expression: \n \t %s \n" (to_string e);
+    Printf.printf "Reduced expressions: \n \t";
+    eval e |> pretty_print;
+    Printf.printf "\n" in
+  List.iter test_eval e
+
+let _ = test test_suite
+
+(** *Testing pre and post processing functions ======================== *)
 
 let _ =
-  eval (Par (Send ("x", "hi" ), Recv ("x", "y", Zero))) |> pretty_print ;
-
   let example1 =
     Par(
       Par(Send("x", "y"),
