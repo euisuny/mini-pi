@@ -111,9 +111,11 @@ let rec take n list =
     | x :: xs -> x :: (take (n - 1) xs)
   else []
 
-let rec take_last n list =
-  if n = 0 then list
-  else
-    match list with
-    | [] -> []
-    | x :: xs -> (take_last (n - 1) xs)
+let take_last n list =
+  let rec take_last n list =
+    if n = 0 then list
+    else
+      match list with
+      | [] -> []
+      | x :: xs -> (take_last (n - 1) xs) in
+  take_last (List.length list - n) list

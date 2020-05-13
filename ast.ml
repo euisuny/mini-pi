@@ -29,7 +29,7 @@ let rec to_string (e : exp) =
 let pretty_print (e : exp list list) =
   e |> List.iter (fun l -> List.iteri (fun i x ->
                                       if i = List.length l - 1
-                                      then Printf.printf "%s\n\t" (to_string x)
+                                      then Printf.printf "%s\n" (to_string x)
                                       else Printf.printf "%s | " (to_string x)) l)
 
 (** *===========================================================================*)

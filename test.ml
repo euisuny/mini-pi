@@ -60,8 +60,9 @@ let e3 = (Par (Send ("x", "hi" ), BangR ("x", "y", Zero)))
 let e4 = (Par (Par (BangR ("y", "k", Zero), Send ("x", "hi" )),
   Par (Send ("x", "bye"), Par (BangR ("x", "y", Zero), Send ("y", "Hi")))))
 let e5 = (Par (Send ("x", "y"), Recv ("x", "y", Send ("x", "y"))))
+let e6 = Par (New ("x" , Par (Send ("x", "y"), Zero)), Zero)
 
-let test_suite = [e0; e1; e2; e3; e4; e5]
+let test_suite = [e0; e1; e2; e3; e4; e5; e6]
 let test_suite_2 = [example1; example2; example3]
 let test (fn : exp -> exp list list) (e : exp list) =
   let test_eval (fn : exp -> exp list list) (e : exp) =

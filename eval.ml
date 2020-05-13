@@ -197,7 +197,8 @@ let rec eval_flattened (e : exp list) : exp list list =
     pairs_communications in
 
   (* If there were no communications, return flattened list with bang unfolding. *)
-  if List.length result = 0 then [exp_list] else result |> remove_duplicates
+  if List.length result = 0 then [exp_list] else
+   result |> remove_duplicates
 
 let list_to_par (e : exp list) : exp =
   List.fold_left (fun x y -> Par (x, y)) Zero e
@@ -208,9 +209,11 @@ let rec rebind m (e : exp list) =
   | h :: t -> let vars = HashSet.values (allv h) in
       if (List.exists (fun s -> String.contains s '~') vars) then
       match find_first_opt (fun x -> String.contains x '~' && List.mem x vars) m with
-      | Some (x, n) -> let a = (h :: (take (n - 2) t) |> list_to_par) in
-        New (x, a) :: (rebind m (take_last ((List.length t) - n - 1) t))
-      | None -> h :: (rebind m t)
+      | Some (x, n) ->
+        let a = (h :: (take (n - 2) t) |> list_to_par) in
+        New (x, a) :: (rebind m (take_last ((List.length t) - n + 1) t))
+      | None ->
+        h :: (rebind m t)
       else h :: (rebind m t)
 
 let eval (e : exp) : exp list list =

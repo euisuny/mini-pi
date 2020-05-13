@@ -69,6 +69,6 @@ let rec repl() : unit =
   repl()
 
 let _ =
-  print_endline "PI version 2020.0";
+  print_endline "miniPI version 1.0";
   try repl()
   with Quit -> ()
