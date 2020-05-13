@@ -35,9 +35,16 @@ let run() : unit =
         (Ast.pretty_print value)
     | None -> failwith "No program loaded"
 
+let fuel (i : int) : unit =
+  match !program with
+    | Some exp ->
+        let value = Eval.pi_fuel i exp in
+        (Ast.pretty_print value)
+    | None -> failwith "No program loaded"
+
 let help() : unit =
   print_endline "Available commands are:";
-  print_endline "load <file>, list, run, help, quit"
+  print_endline "load <file>, list, run, fuel <num>, help, quit"
 
 let quit() : unit =
   print_endline "bye";
@@ -55,6 +62,7 @@ let rec repl() : unit =
           | ("load", [filename]) -> load filename
           | ("list", []) -> list()
           | ("run", []) -> run()
+          | ("fuel", [x]) -> fuel (int_of_string x)
           | ("quit", []) -> quit()
           | _ -> help()
   with Failure s -> print_endline s);
