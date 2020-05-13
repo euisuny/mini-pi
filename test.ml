@@ -7,7 +7,6 @@ open Eval
 
 (** ===== Testing pre and post processing functions =========================== *)
 
-
 let example1 =
     Par(
       Par(Send("x", "y"),
@@ -53,12 +52,6 @@ let _ =
 ()
 
 (** ====== Testing message passing evaluation ================================= *)
-
-let pretty_print (e : exp list list) =
-  e |> List.iter (fun l -> List.iteri (fun i x ->
-                                      if i = List.length l - 1
-                                      then Printf.printf "%s\n\t" (to_string x)
-                                      else Printf.printf "%s | " (to_string x)) l)
 
 let e0 = Par (Zero, Zero)
 let e1 = (Par (Send ("x", "hi" ), Recv ("x", "y", Zero)))

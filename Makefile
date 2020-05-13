@@ -1,14 +1,18 @@
-EXE = util.native ast.native eval.native test.native
+SOURCES = util.ml ast.ml parser.mli parser.ml lexer.ml eval.ml repl.ml
+GENERATED = parser.mli parser.ml parser.output lexer.ml
 
 .PHONY: all
 
-all: $(EXE)
+all: pi
 
 clean:
-	rm -rf _build/
+	rm -f pi *.out *.cmo *.cmx *.cmi $(GENERATED)
 
-# fl: $(SOURCES)
-# 	ocamlc -o fl -g str.cma $(SOURCES)
+pi: $(SOURCES)
+	ocamlc -o pi -g str.cma $(SOURCES)
 
-%.native: %.ml
-	ocamlbuild -cflags -g -lflags -g -cflags -w -cflags -8 $@
+parser.mli parser.ml: parser.mly
+	ocamlyacc -v parser.mly
+
+lexer.ml: lexer.mll parser.ml
+	ocamllex lexer.mll

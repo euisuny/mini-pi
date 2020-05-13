@@ -15,7 +15,7 @@ type exp =
   | Zero
 
 (** *===========================================================================*)
-(** AST Utility                                                                 *)
+(** AST Utility Functions                                                       *)
 (** *===========================================================================*)
 let rec to_string (e : exp) =
   match e with
@@ -26,8 +26,14 @@ let rec to_string (e : exp) =
   | New (v, p) -> sprintf "new %s (%s)" v (to_string p)
   | Zero -> sprintf "0"
 
+let pretty_print (e : exp list list) =
+  e |> List.iter (fun l -> List.iteri (fun i x ->
+                                      if i = List.length l - 1
+                                      then Printf.printf "%s\n\t" (to_string x)
+                                      else Printf.printf "%s | " (to_string x)) l)
+
 (** *===========================================================================*)
-(** Variable Binding and Substitution                                           *)
+(** Variable and Substitution Functions                                         *)
 (** *===========================================================================*)
 
 (* Get all free variables of an expression. *)

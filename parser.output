@@ -1,0 +1,269 @@
+   0  $accept : %entry% $end
+
+   1  main : exp EOF
+
+   2  exp : NEW var exp
+   3      | atomic_exp PAR atomic_exp
+   4      | var BANGR var GET exp
+   5      | var RECV var GET exp
+   6      | atomic_exp
+
+   7  atomic_exp : var SEND var
+   8             | ZERO
+   9             | LPAREN exp RPAREN
+
+  10  var : VAR
+
+  11  %entry% : '\001' main
+
+state 0
+	$accept : . %entry% $end  (0)
+
+	'\001'  shift 1
+	.  error
+
+	%entry%  goto 2
+
+
+state 1
+	%entry% : '\001' . main  (11)
+
+	NEW  shift 3
+	ZERO  shift 4
+	VAR  shift 5
+	LPAREN  shift 6
+	.  error
+
+	main  goto 7
+	exp  goto 8
+	var  goto 9
+	atomic_exp  goto 10
+
+
+state 2
+	$accept : %entry% . $end  (0)
+
+	$end  accept
+
+
+state 3
+	exp : NEW . var exp  (2)
+
+	VAR  shift 5
+	.  error
+
+	var  goto 11
+
+
+state 4
+	atomic_exp : ZERO .  (8)
+
+	.  reduce 8
+
+
+state 5
+	var : VAR .  (10)
+
+	.  reduce 10
+
+
+state 6
+	atomic_exp : LPAREN . exp RPAREN  (9)
+
+	NEW  shift 3
+	ZERO  shift 4
+	VAR  shift 5
+	LPAREN  shift 6
+	.  error
+
+	exp  goto 12
+	var  goto 9
+	atomic_exp  goto 10
+
+
+state 7
+	%entry% : '\001' main .  (11)
+
+	.  reduce 11
+
+
+state 8
+	main : exp . EOF  (1)
+
+	EOF  shift 13
+	.  error
+
+
+state 9
+	exp : var . BANGR var GET exp  (4)
+	exp : var . RECV var GET exp  (5)
+	atomic_exp : var . SEND var  (7)
+
+	BANGR  shift 14
+	SEND  shift 15
+	RECV  shift 16
+	.  error
+
+
+state 10
+	exp : atomic_exp . PAR atomic_exp  (3)
+	exp : atomic_exp .  (6)
+
+	PAR  shift 17
+	RPAREN  reduce 6
+	EOF  reduce 6
+
+
+state 11
+	exp : NEW var . exp  (2)
+
+	NEW  shift 3
+	ZERO  shift 4
+	VAR  shift 5
+	LPAREN  shift 6
+	.  error
+
+	exp  goto 18
+	var  goto 9
+	atomic_exp  goto 10
+
+
+state 12
+	atomic_exp : LPAREN exp . RPAREN  (9)
+
+	RPAREN  shift 19
+	.  error
+
+
+state 13
+	main : exp EOF .  (1)
+
+	.  reduce 1
+
+
+state 14
+	exp : var BANGR . var GET exp  (4)
+
+	VAR  shift 5
+	.  error
+
+	var  goto 20
+
+
+state 15
+	atomic_exp : var SEND . var  (7)
+
+	VAR  shift 5
+	.  error
+
+	var  goto 21
+
+
+state 16
+	exp : var RECV . var GET exp  (5)
+
+	VAR  shift 5
+	.  error
+
+	var  goto 22
+
+
+state 17
+	exp : atomic_exp PAR . atomic_exp  (3)
+
+	ZERO  shift 4
+	VAR  shift 5
+	LPAREN  shift 6
+	.  error
+
+	var  goto 23
+	atomic_exp  goto 24
+
+
+state 18
+	exp : NEW var exp .  (2)
+
+	.  reduce 2
+
+
+state 19
+	atomic_exp : LPAREN exp RPAREN .  (9)
+
+	.  reduce 9
+
+
+state 20
+	exp : var BANGR var . GET exp  (4)
+
+	GET  shift 25
+	.  error
+
+
+state 21
+	atomic_exp : var SEND var .  (7)
+
+	.  reduce 7
+
+
+state 22
+	exp : var RECV var . GET exp  (5)
+
+	GET  shift 26
+	.  error
+
+
+state 23
+	atomic_exp : var . SEND var  (7)
+
+	SEND  shift 15
+	.  error
+
+
+state 24
+	exp : atomic_exp PAR atomic_exp .  (3)
+
+	.  reduce 3
+
+
+state 25
+	exp : var BANGR var GET . exp  (4)
+
+	NEW  shift 3
+	ZERO  shift 4
+	VAR  shift 5
+	LPAREN  shift 6
+	.  error
+
+	exp  goto 27
+	var  goto 9
+	atomic_exp  goto 10
+
+
+state 26
+	exp : var RECV var GET . exp  (5)
+
+	NEW  shift 3
+	ZERO  shift 4
+	VAR  shift 5
+	LPAREN  shift 6
+	.  error
+
+	exp  goto 28
+	var  goto 9
+	atomic_exp  goto 10
+
+
+state 27
+	exp : var BANGR var GET exp .  (4)
+
+	.  reduce 4
+
+
+state 28
+	exp : var RECV var GET exp .  (5)
+
+	.  reduce 5
+
+
+14 terminals, 6 nonterminals
+12 grammar rules, 29 states
