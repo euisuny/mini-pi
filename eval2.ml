@@ -43,10 +43,10 @@ type exp =
 let rec to_string (e : exp) =
   match e with
   | Send (c, v) -> sprintf "%s!%s" c v
-  | Recv (c, v, p) -> sprintf "%s?%s = %s" c v (to_string p)
-  | BangR (c, v, p) -> sprintf "%s?*%s = %s" c v (to_string p)
+  | Recv (c, v, p) -> sprintf "%s?%s = (%s)" c v (to_string p)
+  | BangR (c, v, p) -> sprintf "%s?*%s = (%s)" c v (to_string p)
   | Par (p, p') -> sprintf "%s | %s" (to_string p) (to_string p')
-  | New (v, p) -> sprintf "new %s %s" v (to_string p)
+  | New (v, p) -> sprintf "new %s (%s)" v (to_string p)
   | Zero -> sprintf "0"
 
 (* Communications on channels is dealt with by keeping track of a map. *)
@@ -79,6 +79,13 @@ let rec take n list =
     | [] -> failwith "Not enough elements in list"
     | x :: xs -> x :: (take (n - 1) xs)
   else []
+
+let rec take_last n list =
+  if n = 0 then list
+  else
+    match list with
+    | [] -> []
+    | x :: xs -> (take_last (n - 1) xs)
 
 (** *===========================================================================*)
 (** Variable Substitution Utility Functions                                     *)
@@ -153,6 +160,8 @@ let rec subst (e : exp) (replacee : id) (replacer : id) : exp =
 (** *===========================================================================*)
 (** Pre- and Post- Computation                                                  *)
 (** *===========================================================================*)
+(** The Pre- and Post- Computation gets around stating the scope extrusion principle in
+  * pi-calculus. *)
 
 (* Naive version of subst that is only used for the pre and post computation steps *)
 let rec naive_subst (e : exp) (replacee : id) (replacer : id) : exp =
@@ -175,7 +184,7 @@ let rec naive_subst (e : exp) (replacee : id) (replacer : id) : exp =
     let new_e1 : exp = naive_subst e1 replacee replacer in
     let new_e2 : exp = naive_subst e2 replacee replacer in
     Par (new_e1, new_e2)
-  | New (id, e) -> 
+  | New (id, e) ->
     let new_id = if id = replacee then replacer else id in
     let new_e = naive_subst e replacee replacer in
     New (new_id, new_e)
@@ -185,6 +194,7 @@ let clean_name (id: id) : id =
   List.hd(String.split_on_char '~' id)
 
 let rec precomputation (e: exp) : exp =
+
   let make_unique (r: int ref) (id: id) : id =
     let id = clean_name id in
     let suffix = String.init !r (fun _ -> '~') in
@@ -192,7 +202,7 @@ let rec precomputation (e: exp) : exp =
     id ^ suffix in
 
   let r : int ref = ref 1 in
-  let rec precomputation (e: exp) (r: int ref) : exp = 
+  let rec precomputation (e: exp) (r: int ref) : exp =
     match e with
     | New (id, e) ->
       let new_id = make_unique r id in
@@ -271,13 +281,20 @@ let swap_message_pass (l : exp list) (i1 : int) (i2 : int) : exp list =
 (* To deal with bang do the following in flatten. Whenever you encounter a bang,
   * pull out a copy of the underlying receive and add it to the list that flatten
   * is building to be used in evaluate. When reducing, keep the bang in the AST. *)
-let rec flatten (e : exp) : exp list =
-  match e with
-  | Par (e1, e2) -> flatten e1 @ flatten e2
-  | e -> [e]
 
-let unfold_bang (e : exp list) : exp list =
-  let unfold_bang (e : exp) : exp list =
+let rec flatten m (e : exp) =
+  match e with
+  | Par (e1, e2) ->
+    let (m, l) = flatten m e1 in
+    let (m', l') = flatten m e2 in
+    (m', l @ l')
+  | New (v, e1) ->
+    let (m, l) = flatten m e1 in
+    (add v (List.length l) m, l)
+  | e -> (m, [e])
+
+let unfold_bang (e : exp list) : exp list=
+    let unfold_bang (e : exp) =
     match e with
     | BangR (id1, id2, e') -> Recv (id1, id2, e') :: [e]
     | e -> [e] in
@@ -287,9 +304,10 @@ let unfold_bang (e : exp list) : exp list =
 
 (* This function takes care of a single "evaluation" of a pi-calc expression,
  * assuming that it has already been processed (i.e. no "New" operators) *)
-let eval_flattened (e : exp list) : exp list list =
+let rec eval_flattened (e : exp list) : exp list list =
   (* Every evaluation step does a lazy unfolding of bang. *)
   let exp_list = unfold_bang e in
+
   let flattened_list_indexed = List.mapi (fun i x -> (i, x)) exp_list in
   (* Get the mapping of communications along channels *)
   let channels = map_channels flattened_list_indexed in
@@ -310,8 +328,40 @@ let eval_flattened (e : exp list) : exp list list =
   (* If there were no communications, return flattened list with bang unfolding. *)
   if List.length result = 0 then [exp_list] else result |> remove_duplicates
 
+
+(* let clean_name (id: id) : id =
+ *   List.hd(String.split_on_char '~' id) *)
+
+(* let rec postcomputation (ell : exp list list) : exp list list =
+ *   let rec clean_names (e : exp) : exp =
+ *     let names_list = HashSet.values (allv e) in
+ *     List.fold_right (fun id clean_e -> naive_subst clean_e id (clean_name id)) names_list e in
+ *   List.map (fun el -> List.map clean_names el) ell *)
+
+let list_to_par (e : exp list) : exp =
+  List.fold_left (fun x y -> Par (x, y)) Zero e
+
 let eval (e : exp) : exp list list =
-  flatten e |> eval_flattened
+  let rec par_flatten (e : exp) : exp list =
+    match e with
+    | Par (e1, e2) -> par_flatten e1 @ par_flatten e2
+    | e -> [e] in
+  let par_flat = par_flatten e in
+  let no_new = e |> par_flatten |> unfold_bang in
+  let (m, l) = flatten empty e in
+  let rec rebind (e : exp list) =
+    match e with
+    | [] -> []
+    | h :: t -> let vars = HashSet.values (allv h) in
+       if (List.exists (fun s -> String.contains s '~') vars) then
+       let v_bound = List.find (fun s -> String.contains s '~') vars in
+       match find_first_opt (fun x -> String.contains x '~' && List.mem x vars) m with
+       | Some (x, n) -> let a = (h :: (take (n - 2) t) |> list_to_par) in
+          New (x, a) :: (rebind (take_last ((List.length t) - n - 1) t))
+       | None -> h :: (rebind t)
+       else h :: (rebind t) in
+  let result = eval_flattened l |> List.map rebind in
+  result
 
 (* ===== Fuel-based evaluation =============================================== *)
 (* Since some pi-calc expressions may never terminate, each step of evaluation is
@@ -319,25 +369,20 @@ let eval (e : exp) : exp list list =
  * evaluation to diverging compuation, we provide a fuel-based evaluation. *)
 let fuel (x : int) (e : exp): exp list list =
   let rec fuel_eval (e : exp list) (fuel : int) : exp list list =
-    (* Printf.printf "DEBUG fuel step: %d \n\t" fuel ; *)
     if fuel = 0 then eval_flattened e else
       let step : exp list list = eval_flattened e in
-      (* debug step; *)
       let result = List.map (fun (x : exp list) -> fuel_eval x (fuel - 1)) step |> List.flatten in
       result |> remove_duplicates
  in
-  fuel_eval (flatten e) x
-
-
-(* TODO: Introduce backtracking to observe that bang-unfolding doesn't do anything in
- * the next fuel step. *)
+  let (m, l) = flatten empty e in
+  fuel_eval l x
 
 (** ============================================================================*)
 (** Top-level Evaluator, with Pre-and Post- Processing                          *)
 (** *===========================================================================*)
 
-let pi_eval (e : exp) (i : int) : exp list list =
-  e |> precomputation |> fuel i |> postcomputation
+let pi_eval (e : exp) : exp list list =
+  e |> precomputation |> eval |> postcomputation
 
 (** ============================================================================*)
 (** Testing                                                                     *)
@@ -345,25 +390,29 @@ let pi_eval (e : exp) (i : int) : exp list list =
 
 (** ===== Testing pre and post processing functions =========================== *)
 
-let _ =
-  let example1 =
+
+let example1 =
     Par(
       Par(Send("x", "y"),
           Recv("y", "z",
                New("z",
                    New("z",
                        Par(
-                         Send("x", "y"),
-                         Recv("y", "z", Zero)
+                         Recv("x", "y", Zero),
+                         Send("y", "z")
                        )
                       )
                   )
               )
          ),
       New("y",
-          Par(Send("x", "y"), Recv("y", "z", Zero))
+          Par(Recv ("x", "y", Zero), Send("y", "z"))
          )
-    ) in
+    )
+let example2 = Par(Send("x", "y"), Recv("y", "z", Par(Send("w", "z"), Recv("z", "v", Zero))))
+let example3 = Par(Send("x", "y"), Recv("y", "y", Par(Send("w", "y"), Recv("y", "y", New("y~", Send("y~", "y~"))))))
+
+let _ =
   let example1_precomputed = precomputation example1 in
   let example1_postcomputed = List.hd (List.hd (postcomputation [[example1]])) in
 
@@ -377,12 +426,10 @@ let _ =
   let sub_example2_subst = subst sub_example2 "z" "x" in
   print_endline("subst1: " ^ to_string sub_example2_subst) ;
 
-  let example2 = Par(Send("x", "y"), Recv("y", "z", Par(Send("w", "z"), Recv("z", "v", Zero)))) in
   let example2_subst = subst example2 "y" "k" in
   print_endline("orig: " ^ to_string example2) ;
   print_endline("subst2: " ^ to_string example2_subst);
 
-  let example3 = Par(Send("x", "y"), Recv("y", "y", Par(Send("w", "y"), Recv("y", "y", New("y~", Send("y~", "y~")))))) in
   let example3_subst = subst example3 "y" "k" in
   print_endline("orig: " ^ to_string example3) ;
   print_endline("subst3: " ^ to_string example3_subst) ;
@@ -391,7 +438,8 @@ let _ =
 (** ====== Testing message passing evaluation ================================= *)
 
 let pretty_print (e : exp list list) =
-  e |> List.iter (fun l -> List.iteri (fun i x -> if i = List.length l - 1
+  e |> List.iter (fun l -> List.iteri (fun i x ->
+                                      if i = List.length l - 1
                                       then Printf.printf "%s\n\t" (to_string x)
                                       else Printf.printf "%s | " (to_string x)) l)
 
@@ -401,9 +449,10 @@ let e2 = (Par (Send ("x", "hi" ), Par (Send ("x", "bye"), Recv ("x", "y", Zero))
 let e3 = (Par (Send ("x", "hi" ), BangR ("x", "y", Zero)))
 let e4 = (Par (Par (BangR ("y", "k", Zero), Send ("x", "hi" )),
   Par (Send ("x", "bye"), Par (BangR ("x", "y", Zero), Send ("y", "Hi")))))
+let e5 = (Par (Send ("x", "y"), Recv ("x", "y", Send ("x", "y"))))
 
-let test_suite = [e0; e1; e2; e3; e4]
-
+let test_suite = [e0; e1; e2; e3; e4; e5]
+let test_suite_2 = [example1; example2; example3]
 let test (fn : exp -> exp list list) (e : exp list) =
   let test_eval (fn : exp -> exp list list) (e : exp) =
     Printf.printf "Original expression: \n \t %s \n" (to_string e);
@@ -414,7 +463,9 @@ let test (fn : exp -> exp list list) (e : exp list) =
 
 let _ =
         Printf.printf "========== Eval Testing ===========\n";
-        test eval test_suite;
-        Printf.printf "========== Fuel Testing ===========\n";
-        test (fuel 3) test_suite;
+        test pi_eval test_suite_2;
+        (* Printf.printf "========== Fuel Testing ===========\n";
+         * test (fuel 3) test_suite;
+         * Printf.printf "========== Top-level Testing ===========\n";
+         * test (pi_eval 3) test_suite_2; *)
 ()
