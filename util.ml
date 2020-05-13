@@ -79,3 +79,40 @@ module Fresh : Fresh = struct
     let rec check n = if HashSet.mem avoid n then check (LexStream.next stream) else n in
     check (LexStream.next stream)
 end
+
+
+(*****************************************************
+ * List-related Utility Functions.
+ *****************************************************)
+(* Remove duplicates in a list using HashSet. *)
+let remove_duplicates (l : 'a list) : 'a list =
+  let h = HashSet.make () in
+  List.iter (fun x -> HashSet.add h x) l;
+  h |> HashSet.values
+
+(* Permutations from https://gist.github.com/Bamco/6151962 *)
+(* interleave 1 [2;3] = [ [1;2;3]; [2;1;3]; [2;3;1] ] *)
+let rec interleave x lst =
+  match lst with
+  | [] -> [[x]]
+  | hd::tl -> (x::lst) :: (List.map (fun y -> hd::y) (interleave x tl))
+
+let rec permutations lst =
+  match lst with
+  | hd::tl -> List.concat (List.map (interleave hd) (permutations tl))
+  | _ -> [lst]
+
+
+let rec take n list =
+  if n > 0 then
+    match list with
+    | [] -> failwith "Not enough elements in list"
+    | x :: xs -> x :: (take (n - 1) xs)
+  else []
+
+let rec take_last n list =
+  if n = 0 then list
+  else
+    match list with
+    | [] -> []
+    | x :: xs -> (take_last (n - 1) xs)

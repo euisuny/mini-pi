@@ -1,5 +1,4 @@
-# SOURCES = util.ml ast.ml vanilla.ml
-EXE = util.native ast.native eval2.native
+EXE = util.native ast.native eval.native test.native
 
 .PHONY: all
 
