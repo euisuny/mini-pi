@@ -9,11 +9,14 @@
 *.cmx
 *.cmxs
 *.cmxa
-parser.mli
-parser.output
 pi
 *.swp
 .DS_Store
+
+# Menhir generated
+parser.ml
+parser.mli
+parser.output
 
 # ocamlbuild working directory
 _build/
